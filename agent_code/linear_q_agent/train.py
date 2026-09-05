@@ -36,11 +36,9 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     Called once per step to allow intermediate rewards based on game events.
 
     When this method is called, self.events will contain a list of all game
-    events relevant to your agent that occurred during the previous step. Consult
-    settings.py to see what events are tracked. You can hand out rewards to your
-    agent based on these events and your knowledge of the (new) game state.
+    events relevant to the agent that occurred during the previous step.
 
-    This is *one* of the places where you could update your agent.
+    This is *one* of the places where the agent could be updated.
 
     :param self: This object is passed to all callbacks and you can set arbitrary values.
     :param old_game_state: The state that was passed to the last call of `act`.
@@ -50,7 +48,7 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     """
     self.logger.debug(f'Encountered game event(s) {", ".join(map(repr, events))} in step {new_game_state["step"]}')
 
-    # Idea: Add your own events to hand out rewards
+    # Idea: Add own events to hand out rewards
     if ...:
         events.append(PLACEHOLDER_EVENT)
 
@@ -64,12 +62,12 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
     This replaces game_events_occurred in this round.
 
     This is similar to game_events_occurred. self.events will contain all events that
-    occurred during your agent's final step.
+    occurred during the agent's final step.
 
-    This is *one* of the places where you could update your agent.
+    This is *one* of the places where you could update the agent.
     This is also a good place to store an agent that you updated.
 
-    :param self: The same object that is passed to all of your callbacks.
+    :param self: The same object that is passed to all of the callbacks.
     """
     self.logger.debug(f'Encountered event(s) {", ".join(map(repr, events))} in final step')
     self.transitions.append(Transition(state_to_features(last_game_state), last_action, None, reward_from_events(self, events)))
@@ -81,9 +79,9 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
 
 def reward_from_events(self, events: List[str]) -> int:
     """
-    *This is not a required function, but an idea to structure your code.*
+    *This is not a required function, but an idea to structure the code.*
 
-    Here you can modify the rewards your agent get so as to en/discourage
+    Here you can modify the rewards the agent get so as to en/discourage
     certain behavior.
     """
     game_rewards = {
