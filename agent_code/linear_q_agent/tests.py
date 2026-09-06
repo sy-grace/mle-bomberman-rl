@@ -1,11 +1,26 @@
+import os
 import numpy as np
 import unittest
+import tempfile
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+
+import events as game_events
 
 from . import callbacks, train
 from .callbacks import state_to_features
 from .model import Linear_QNet
+
+
+@contextmanager
+def temporary_working_directory(directory):
+    previous_directory = os.getcwd()
+    os.chdir(directory)
+    try:
+        yield
+    finally:
+        os.chdir(previous_directory)
 
 
 class LinearQAgentTest(unittest.TestCase):
@@ -202,3 +217,52 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertEqual(reward, -1.0)
         self.assertIsNone(next_state)
         self.assertAlmostEqual(agent.epsilon, 0.5 * 0.995)
+
+    def test_training_checkpoint_reloads_for_evaluation(self):
+        with tempfile.TemporaryDirectory() as directory, temporary_working_directory(
+            directory
+        ):
+            training_agent = SimpleNamespace(train=True, logger=Mock())
+            callbacks.setup(training_agent)
+            train.setup_training(training_agent)
+            training_agent.epsilon = 0.0
+
+            state = self._game_state()
+            action = callbacks.act(training_agent, state)
+            weights_before_update = training_agent.model.weights.copy()
+
+            train.game_events_occurred(
+                training_agent,
+                state,
+                action,
+                state,
+                [game_events.COIN_COLLECTED],
+            )
+            train.end_of_round(
+                training_agent,
+                state,
+                action,
+                [],
+            )
+
+            self.assertFalse(
+                np.array_equal(weights_before_update, training_agent.model.weights)
+            )
+            saved_weights = training_agent.model.weights.copy()
+            saved_epsilon = training_agent.epsilon
+
+            evaluation_agent = SimpleNamespace(train=False, logger=Mock())
+            callbacks.setup(evaluation_agent)
+
+            np.testing.assert_allclose(
+                evaluation_agent.model.weights, saved_weights
+            )
+            self.assertEqual(evaluation_agent.epsilon, saved_epsilon)
+            self.assertEqual(
+                callbacks.act(evaluation_agent, state),
+                callbacks.ACTIONS[
+                    int(np.argmax(evaluation_agent.model.predict(
+                        state_to_features(state)
+                    )))
+                ],
+            )
