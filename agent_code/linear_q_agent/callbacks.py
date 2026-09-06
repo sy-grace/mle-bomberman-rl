@@ -4,8 +4,11 @@ import random
 
 import numpy as np
 
+from .model import Linear_QNet
+
 
 ACTIONS = ['UP', 'RIGHT', 'DOWN', 'LEFT', 'WAIT', 'BOMB']
+EPSILON_START = 1.0
 
 
 def setup(self):
@@ -17,19 +20,24 @@ def setup(self):
     after this method. This separation allows to share trained agent
     with other students, without revealing training code.
 
-    In this example, our model is a set of probabilities over actions
-    that are is independent of the game state.
-
     :param self: This object is passed to all callbacks and you can set arbitrary values.
     """
-    if self.train or not os.path.isfile("my-saved-model.pt"):
+    if not os.path.isfile("my-saved-model.pt"):
         self.logger.info("Setting up model from scratch.")
-        weights = np.random.rand(len(ACTIONS))
-        self.model = weights / weights.sum()
+        self.model = Linear_QNet(input_size=7, output_size=len(ACTIONS))
+        self.epsilon = EPSILON_START
     else:
         self.logger.info("Loading model from saved state.")
         with open("my-saved-model.pt", "rb") as file:
-            self.model = pickle.load(file)
+            checkpoint = pickle.load(file)
+
+        if isinstance(checkpoint, dict) and "model" in checkpoint:
+            self.model = checkpoint["model"]
+            self.epsilon = float(checkpoint.get("epsilon", EPSILON_START))
+        else:
+            # Support model-only files created before epsilon was persisted.
+            self.model = checkpoint
+            self.epsilon = EPSILON_START
 
 
 def act(self, game_state: dict) -> str:
@@ -41,18 +49,18 @@ def act(self, game_state: dict) -> str:
     :param game_state: The dictionary that describes everything on the board.
     :return: The action to take as a string.
     """
-    # to do: Exploration vs exploitation
-    random_prob = .1
-    if self.train and random.random() < random_prob:
-        self.logger.debug("Choosing action purely at random.")
-        # 80%: walk in any direction. 10% wait. 10% bomb.
-        return np.random.choice(ACTIONS, p=[.2, .2, .2, .2, .1, .1])
 
-    self.logger.debug("Querying model for action.")
-    return np.random.choice(ACTIONS, p=self.model)
+    features = state_to_features(game_state)
+
+    if self.train and random.random() < self.epsilon:
+        return random.choice(ACTIONS)  # explore
+
+    q_values = self.model.predict(features)
+    self.logger.debug("Choosing action with the highest Q-value.")
+    return ACTIONS[int(np.argmax(q_values))]  # exploit
 
 
-def state_to_features(game_state: dict) -> np.array:
+def state_to_features(game_state: dict) -> np.ndarray:
     """
     Converts the game state to the input of model, i.e. a feature vector.
 

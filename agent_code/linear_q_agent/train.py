@@ -13,6 +13,9 @@ Transition = namedtuple('Transition',
 # Hyper parameters -- DO modify
 TRANSITION_HISTORY_SIZE = 3  # keep only ... last transitions
 RECORD_ENEMY_TRANSITIONS = 1.0  # record enemy transitions with probability ...
+EPSILON_START = 1.0
+EPSILON_MIN = 0.05
+EPSILON_DECAY = 0.995
 
 # Events
 PLACEHOLDER_EVENT = "PLACEHOLDER"
@@ -24,11 +27,14 @@ def setup_training(self):
 
     This is called after `setup` in callbacks.py.
 
-    :param self: This object is passed to all callbacks and you can set arbitrary values.
+    :param self: This object is passed to all callbacks and can set arbitrary values.
     """
     # Example: Setup an array that will note transition tuples
     # (s, a, r, s')
     self.transitions = deque(maxlen=TRANSITION_HISTORY_SIZE)
+    self.epsilon = getattr(self, "epsilon", EPSILON_START)
+    self.epsilon_min = EPSILON_MIN
+    self.epsilon_decay = EPSILON_DECAY
 
 
 def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_state: dict, events: List[str]):
@@ -40,9 +46,9 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
 
     This is *one* of the places where the agent could be updated.
 
-    :param self: This object is passed to all callbacks and you can set arbitrary values.
+    :param self: This object is passed to all callbacks and can set arbitrary values.
     :param old_game_state: The state that was passed to the last call of `act`.
-    :param self_action: The action that you took.
+    :param self_action: The action that tookplace.
     :param new_game_state: The state the agent is in now.
     :param events: The events that occurred when going from  `old_game_state` to `new_game_state`
     """
@@ -54,6 +60,7 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
 
     # state_to_features is defined in callbacks.py
     self.transitions.append(Transition(state_to_features(old_game_state), self_action, state_to_features(new_game_state), reward_from_events(self, events)))
+    self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
 
 def end_of_round(self, last_game_state: dict, last_action: str, events: List[str]):
@@ -64,8 +71,7 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
     This is similar to game_events_occurred. self.events will contain all events that
     occurred during the agent's final step.
 
-    This is *one* of the places where you could update the agent.
-    This is also a good place to store an agent that you updated.
+    This is *one* of the places where the agent could be updated and stored.
 
     :param self: The same object that is passed to all of the callbacks.
     """
@@ -74,15 +80,20 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
 
     # Store the model
     with open("my-saved-model.pt", "wb") as file:
-        pickle.dump(self.model, file)
+        pickle.dump(
+            {
+                "model": self.model,
+                "epsilon": self.epsilon,
+            },
+            file,
+        )
 
 
 def reward_from_events(self, events: List[str]) -> int:
     """
     *This is not a required function, but an idea to structure the code.*
 
-    Here you can modify the rewards the agent get so as to en/discourage
-    certain behavior.
+    Here we can modify the rewards the agent get so as to en/discourage certain behavior.
     """
     game_rewards = {
         e.COIN_COLLECTED: 1,
