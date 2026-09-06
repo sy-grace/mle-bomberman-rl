@@ -19,6 +19,14 @@ EPSILON_DECAY = 0.995
 
 # Events
 PLACEHOLDER_EVENT = "PLACEHOLDER"
+ACTION_TO_INDEX = {
+    "UP": 0,
+    "RIGHT": 1,
+    "DOWN": 2,
+    "LEFT": 3,
+    "WAIT": 4,
+    "BOMB": 5,
+}
 
 
 def setup_training(self):
@@ -59,7 +67,12 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
         events.append(PLACEHOLDER_EVENT)
 
     # state_to_features is defined in callbacks.py
-    self.transitions.append(Transition(state_to_features(old_game_state), self_action, state_to_features(new_game_state), reward_from_events(self, events)))
+    state = state_to_features(old_game_state)
+    next_state = state_to_features(new_game_state)
+    reward = reward_from_events(self, events)
+    action = ACTION_TO_INDEX[self_action]
+    self.model.update(state, action, reward, next_state)
+    self.transitions.append(Transition(state, self_action, next_state, reward))
     self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
 
@@ -76,7 +89,12 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
     :param self: The same object that is passed to all of the callbacks.
     """
     self.logger.debug(f'Encountered event(s) {", ".join(map(repr, events))} in final step')
-    self.transitions.append(Transition(state_to_features(last_game_state), last_action, None, reward_from_events(self, events)))
+    state = state_to_features(last_game_state)
+    reward = reward_from_events(self, events)
+    action = ACTION_TO_INDEX[last_action]
+    self.model.update(state, action, reward, None)
+    self.transitions.append(Transition(state, last_action, None, reward))
+    self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
     # Store the model
     with open("my-saved-model.pt", "wb") as file:
