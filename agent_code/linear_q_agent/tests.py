@@ -1,10 +1,26 @@
 import numpy as np
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+from . import callbacks, train
 from .callbacks import state_to_features
 from .model import Linear_QNet
 
 
 class LinearQAgentTest(unittest.TestCase):
+    @staticmethod
+    def _game_state():
+        field = np.ones((7, 7), dtype=int)
+        field[1:-1, 1:-1] = 0
+        return {
+            "field": field,
+            "bombs": [],
+            "coins": [(5, 4)],
+            "self": ("player", 0, 1, (3, 3)),
+            "step": 1,
+        }
+
     def test_features(self):
         field = np.ones((7, 7), dtype=int)  # walls/crates
         field[1:-1, 1:-1] = 0               # free interior
@@ -102,3 +118,87 @@ class LinearQAgentTest(unittest.TestCase):
         # max(Q(next_state)) is 3, so target is 1 + 0.5 * 3 = 2.5.
         self.assertAlmostEqual(td_error, 2.5)
         np.testing.assert_allclose(model.weights[:, 0], [0.25, 0.5])
+
+    def test_act_explores_when_random_value_is_below_epsilon(self):
+        agent = SimpleNamespace(
+            train=True,
+            epsilon=0.5,
+            model=Mock(),
+            logger=Mock(),
+        )
+
+        with patch.object(callbacks.random, "random", return_value=0.1), patch.object(
+            callbacks.random, "choice", return_value="BOMB"
+        ) as choice:
+            action = callbacks.act(agent, self._game_state())
+
+        self.assertEqual(action, "BOMB")
+        choice.assert_called_once_with(callbacks.ACTIONS)
+        agent.model.predict.assert_not_called()
+
+    def test_act_exploits_highest_q_value_when_not_exploring(self):
+        agent = SimpleNamespace(
+            train=True,
+            epsilon=0.5,
+            model=Mock(),
+            logger=Mock(),
+        )
+        agent.model.predict.return_value = np.array([1.0, 4.0, 2.0, 0.0, 3.0, -1.0])
+
+        with patch.object(callbacks.random, "random", return_value=0.9):
+            action = callbacks.act(agent, self._game_state())
+
+        self.assertEqual(action, "RIGHT")
+        agent.model.predict.assert_called_once()
+
+    def test_game_event_updates_selected_action_and_decays_epsilon(self):
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            epsilon=0.5,
+            epsilon_min=0.05,
+            epsilon_decay=0.995,
+            transitions=[],
+        )
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        with patch.object(train, "reward_from_events", return_value=2.0):
+            train.game_events_occurred(agent, old_state, "LEFT", new_state, [])
+
+        state, action, next_state, reward = agent.transitions[-1]
+        self.assertEqual(action, "LEFT")
+        self.assertEqual(reward, 2.0)
+        np.testing.assert_allclose(state, state_to_features(old_state))
+        np.testing.assert_allclose(next_state, state_to_features(new_state))
+        agent.model.update.assert_called_once()
+        update_state, update_action, update_reward, update_next_state = (
+            agent.model.update.call_args.args
+        )
+        np.testing.assert_allclose(update_state, state)
+        self.assertEqual(update_action, train.ACTION_TO_INDEX["LEFT"])
+        self.assertEqual(update_reward, 2.0)
+        np.testing.assert_allclose(update_next_state, next_state)
+        self.assertAlmostEqual(agent.epsilon, 0.5 * 0.995)
+
+    def test_terminal_event_updates_with_no_next_state(self):
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            epsilon=0.5,
+            epsilon_min=0.05,
+            epsilon_decay=0.995,
+            transitions=[],
+        )
+
+        with patch.object(train, "reward_from_events", return_value=-1.0), patch(
+            "builtins.open"
+        ), patch.object(train.pickle, "dump"):
+            train.end_of_round(agent, self._game_state(), "BOMB", [])
+
+        agent.model.update.assert_called_once()
+        _, action, reward, next_state = agent.model.update.call_args.args
+        self.assertEqual(action, train.ACTION_TO_INDEX["BOMB"])
+        self.assertEqual(reward, -1.0)
+        self.assertIsNone(next_state)
+        self.assertAlmostEqual(agent.epsilon, 0.5 * 0.995)
