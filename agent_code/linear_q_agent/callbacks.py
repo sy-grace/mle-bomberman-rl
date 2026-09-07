@@ -9,6 +9,12 @@ from .model import Linear_QNet
 
 ACTIONS = ['UP', 'RIGHT', 'DOWN', 'LEFT', 'WAIT', 'BOMB']
 EPSILON_START = 1.0
+OPPOSITE_ACTION = {
+    "UP": "DOWN",
+    "DOWN": "UP",
+    "LEFT": "RIGHT",
+    "RIGHT": "LEFT",
+}
 
 
 def setup(self):
@@ -39,25 +45,30 @@ def setup(self):
             self.model = checkpoint
             self.epsilon = EPSILON_START
 
+    self.recent_actions = []
 
 def act(self, game_state: dict) -> str:
     """
     Agent should parse the input, think, and take a decision.
-    When not in training mode, the maximum execution time for this method is 0.5s.
-
-    :param self: The same object that is passed to all of callbacks.
-    :param game_state: The dictionary that describes everything on the board.
-    :return: The action to take as a string.
     """
 
     features = state_to_features(game_state)
 
+    # Exploration during training
     if self.train and random.random() < self.epsilon:
-        return random.choice(ACTIONS)  # explore
+        self.logger.debug("Choosing action purely at random.")
+        return random.choice(ACTIONS)
 
+    # Exploitation
     q_values = self.model.predict(features)
+
+    # Choose action with highest Q-value
+    action_index = int(np.argmax(q_values))
+    action = ACTIONS[action_index]
+
     self.logger.debug("Choosing action with the highest Q-value.")
-    return ACTIONS[int(np.argmax(q_values))]  # exploit
+
+    return action
 
 
 def state_to_features(game_state: dict) -> np.ndarray:

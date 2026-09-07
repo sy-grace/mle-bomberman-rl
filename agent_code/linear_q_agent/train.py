@@ -18,14 +18,21 @@ EPSILON_MIN = 0.05
 EPSILON_DECAY = 0.995
 
 # Events
-PLACEHOLDER_EVENT = "PLACEHOLDER"
+# PLACEHOLDER_EVENT = "PLACEHOLDER"
+MOVED_TOWARDS_COIN = "MOVED_TOWARDS_COIN"
+MOVED_AWAY_FROM_COIN = "MOVED_AWAY_FROM_COIN"
+MOVED_INTO_WALL = "MOVED_INTO_WALL"
+UNNECESSARILY_WAITED = "UNNECESSARILY_WAITED"
+OSCILLATION = "OSCILLATION"
+
+
 ACTION_TO_INDEX = {
     "UP": 0,
     "RIGHT": 1,
     "DOWN": 2,
     "LEFT": 3,
     "WAIT": 4,
-    "BOMB": 5,
+    "BOMB": 5
 }
 
 
@@ -40,9 +47,15 @@ def setup_training(self):
     # Example: Setup an array that will note transition tuples
     # (s, a, r, s')
     self.transitions = deque(maxlen=TRANSITION_HISTORY_SIZE)
+
     self.epsilon = getattr(self, "epsilon", EPSILON_START)
     self.epsilon_min = EPSILON_MIN
     self.epsilon_decay = EPSILON_DECAY
+
+    # Movement tracking
+    self.last_action = None
+    self.previous_action = None
+    self.last_distance = None
 
 
 def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_state: dict, events: List[str]):
@@ -62,18 +75,75 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     """
     self.logger.debug(f'Encountered game event(s) {", ".join(map(repr, events))} in step {new_game_state["step"]}')
 
-    # Idea: Add own events to hand out rewards
-    if ...:
-        events.append(PLACEHOLDER_EVENT)
-
     # state_to_features is defined in callbacks.py
     state = state_to_features(old_game_state)
     next_state = state_to_features(new_game_state)
+
+    # Custom events based on coin proximity and movement
+    # Coin distance
+    old_dx, old_dy = state[5], state[6]
+    new_dx, new_dy = next_state[5], next_state[6]
+
+    old_distance = abs(old_dx) + abs(old_dy)
+    new_distance = abs(new_dx) + abs(new_dy)
+
+    # Movement toward / away from coin
+    if old_distance > 0:
+
+        if new_distance < old_distance:
+            events.append(MOVED_TOWARDS_COIN)
+
+        elif new_distance > old_distance:
+            events.append(MOVED_AWAY_FROM_COIN)
+
+    # Detect blocked movement
+    action_to_feature = {
+        "UP": 1,
+        "DOWN": 2,
+        "LEFT": 3,
+        "RIGHT": 4,
+    }
+
+    if self_action in action_to_feature:
+
+        feature_idx = action_to_feature[self_action]
+
+        if state[feature_idx] == 0:
+            events.append(MOVED_INTO_WALL)
+
+    # Penalize unnecessary WAIT
+    if self_action == "WAIT" and old_distance > 0:
+        events.append(UNNECESSARILY_WAITED)
+
+    # Penalize oscillation
+    opposite = {
+        "UP": "DOWN",
+        "DOWN": "UP",
+        "LEFT": "RIGHT",
+        "RIGHT": "LEFT",
+    }
+
+    previous_action = getattr(self, "previous_action", None)
+    last_action = getattr(self, "last_action", None)
+
+    if (
+        previous_action is not None
+        and last_action is not None
+        and self_action == previous_action
+        and last_action == opposite.get(self_action)
+    ):
+        events.append(OSCILLATION)
+
+    # Update action history
+    self.previous_action = last_action
+    self.last_action = self_action
+    self.last_distance = old_distance
+
+    # Model Learn
     reward = reward_from_events(self, events)
     action = ACTION_TO_INDEX[self_action]
     self.model.update(state, action, reward, next_state)
     self.transitions.append(Transition(state, self_action, next_state, reward))
-    self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
 
 def end_of_round(self, last_game_state: dict, last_action: str, events: List[str]):
@@ -94,6 +164,11 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
     action = ACTION_TO_INDEX[last_action]
     self.model.update(state, action, reward, None)
     self.transitions.append(Transition(state, last_action, None, reward))
+
+    # Reset each round
+    self.previous_action = None
+    self.last_action = None
+    self.last_distance = None
     self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
     # Store the model
@@ -109,15 +184,22 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
 
 def reward_from_events(self, events: List[str]) -> int:
     """
-    *This is not a required function, but an idea to structure the code.*
-
     Here we can modify the rewards the agent get so as to en/discourage certain behavior.
     """
     game_rewards = {
-        e.COIN_COLLECTED: 1,
-        e.KILLED_OPPONENT: 5,
-        PLACEHOLDER_EVENT: -.1  # idea: the custom event is bad
+        e.COIN_COLLECTED: +10,
+
+        MOVED_TOWARDS_COIN: +1,
+        MOVED_AWAY_FROM_COIN: -1,
+
+        MOVED_INTO_WALL: -1,
+        UNNECESSARILY_WAITED: -0.5,
+        OSCILLATION: -0.5,
+
+        e.BOMB_DROPPED: -5,
+        e.INVALID_ACTION: -2,
     }
+
     reward_sum = 0
     for event in events:
         if event in game_rewards:

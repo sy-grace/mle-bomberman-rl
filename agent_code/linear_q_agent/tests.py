@@ -166,7 +166,7 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertEqual(action, "RIGHT")
         agent.model.predict.assert_called_once()
 
-    def test_game_event_updates_selected_action_and_decays_epsilon(self):
+    def test_game_event_updates_selected_action_without_decaying_epsilon(self):
         agent = SimpleNamespace(
             model=Mock(),
             logger=Mock(),
@@ -194,7 +194,7 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertEqual(update_action, train.ACTION_TO_INDEX["LEFT"])
         self.assertEqual(update_reward, 2.0)
         np.testing.assert_allclose(update_next_state, next_state)
-        self.assertAlmostEqual(agent.epsilon, 0.5 * 0.995)
+        self.assertAlmostEqual(agent.epsilon, 0.5)
 
     def test_terminal_event_updates_with_no_next_state(self):
         agent = SimpleNamespace(
