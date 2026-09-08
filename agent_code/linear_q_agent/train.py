@@ -22,7 +22,6 @@ EPSILON_DECAY = 0.995
 # PLACEHOLDER_EVENT = "PLACEHOLDER"
 MOVED_TOWARDS_COIN = "MOVED_TOWARDS_COIN"
 MOVED_AWAY_FROM_COIN = "MOVED_AWAY_FROM_COIN"
-MOVED_INTO_WALL = "MOVED_INTO_WALL"
 UNNECESSARILY_WAITED = "UNNECESSARILY_WAITED"
 OSCILLATION = "OSCILLATION"
 
@@ -123,21 +122,6 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
         elif new_distance > old_distance:
             events.append(MOVED_AWAY_FROM_COIN)
 
-    # Detect blocked movement
-    action_to_feature = {
-        "UP": 1,
-        "DOWN": 2,
-        "LEFT": 3,
-        "RIGHT": 4,
-    }
-
-    if self_action in action_to_feature:
-
-        feature_idx = action_to_feature[self_action]
-
-        if state[feature_idx] == 0:
-            events.append(MOVED_INTO_WALL)
-
     # Penalize unnecessary WAIT
     if self_action == "WAIT" and old_distance > 0:
         events.append(UNNECESSARILY_WAITED)
@@ -213,7 +197,18 @@ def reward_from_events(self, events: List[str]) -> float:
     """
     Here we can modify the rewards the agent get so as to en/discourage certain behavior.
     """
-    game_rewards = REWARD_CONFIGS[self.reward_mode]
+    game_rewards = {
+        e.COIN_COLLECTED: +10,
+
+        MOVED_TOWARDS_COIN: +1,
+        MOVED_AWAY_FROM_COIN: -1,
+
+        UNNECESSARILY_WAITED: -0.5,
+        OSCILLATION: -0.5,
+
+        e.BOMB_DROPPED: -5,
+        e.INVALID_ACTION: -2,
+    }
 
     reward_sum = 0
     for event in events:

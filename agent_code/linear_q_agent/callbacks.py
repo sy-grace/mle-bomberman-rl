@@ -9,12 +9,7 @@ from .model import Linear_QNet
 
 ACTIONS = ['UP', 'RIGHT', 'DOWN', 'LEFT', 'WAIT', 'BOMB']
 EPSILON_START = 1.0
-OPPOSITE_ACTION = {
-    "UP": "DOWN",
-    "DOWN": "UP",
-    "LEFT": "RIGHT",
-    "RIGHT": "LEFT",
-}
+MODEL_START_MODE = "resume"  # Set to "fresh" to ignore an existing checkpoint.
 
 
 def setup(self):
@@ -28,7 +23,10 @@ def setup(self):
 
     :param self: This object is passed to all callbacks and you can set arbitrary values.
     """
-    if not os.path.isfile("my-saved-model.pt"):
+    if MODEL_START_MODE not in {"resume", "fresh"}:
+        raise ValueError("MODEL_START_MODE must be either 'resume' or 'fresh'.")
+
+    if MODEL_START_MODE == "fresh" or not os.path.isfile("my-saved-model.pt"):
         self.logger.info("Setting up model from scratch.")
         self.model = Linear_QNet(input_size=7, output_size=len(ACTIONS))
         self.epsilon = EPSILON_START
@@ -44,8 +42,6 @@ def setup(self):
             # Support model-only files created before epsilon was persisted.
             self.model = checkpoint
             self.epsilon = EPSILON_START
-
-    self.recent_actions = []
 
 def act(self, game_state: dict) -> str:
     """
