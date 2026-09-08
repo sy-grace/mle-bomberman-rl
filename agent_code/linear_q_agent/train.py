@@ -1,3 +1,4 @@
+import os
 from collections import namedtuple, deque
 
 import pickle
@@ -25,6 +26,25 @@ MOVED_INTO_WALL = "MOVED_INTO_WALL"
 UNNECESSARILY_WAITED = "UNNECESSARILY_WAITED"
 OSCILLATION = "OSCILLATION"
 
+SPARSE_REWARDS = {
+    e.COIN_COLLECTED: +10
+}
+
+BASIC_EXTRA_REWARDS = {
+    e.INVALID_ACTION: -2
+}
+
+SHAPING_EXTRA_REWARDS = {
+    MOVED_TOWARDS_COIN: +1,
+    MOVED_AWAY_FROM_COIN: -1,
+    UNNECESSARILY_WAITED: -0.5
+}
+
+REWARD_CONFIGS = {
+    "sparse": SPARSE_REWARDS, 
+    "basic": {**SPARSE_REWARDS, **BASIC_EXTRA_REWARDS}, 
+    "shaped": {**SPARSE_REWARDS, **BASIC_EXTRA_REWARDS, **SHAPING_EXTRA_REWARDS}
+}
 
 ACTION_TO_INDEX = {
     "UP": 0,
@@ -57,6 +77,13 @@ def setup_training(self):
     self.previous_action = None
     self.last_distance = None
 
+    # Reward configuration
+    self.reward_mode = os.getenv("BOMBERMAN_REWARD_MODE", "basic").lower()
+
+    if self.reward_mode not in REWARD_CONFIGS:
+        raise ValueError(f"Invalid reward mode: {self.reward_mode}.\n Choose from {list(REWARD_CONFIGS.keys())}.")
+
+    self.logger.info(f"Reward mode: {self.reward_mode}")
 
 def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_state: dict, events: List[str]):
     """
@@ -182,27 +209,17 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
         )
 
 
-def reward_from_events(self, events: List[str]) -> int:
+def reward_from_events(self, events: List[str]) -> float:
     """
     Here we can modify the rewards the agent get so as to en/discourage certain behavior.
     """
-    game_rewards = {
-        e.COIN_COLLECTED: +10,
-
-        MOVED_TOWARDS_COIN: +1,
-        MOVED_AWAY_FROM_COIN: -1,
-
-        MOVED_INTO_WALL: -1,
-        UNNECESSARILY_WAITED: -0.5,
-        OSCILLATION: -0.5,
-
-        e.BOMB_DROPPED: -5,
-        e.INVALID_ACTION: -2,
-    }
+    game_rewards = REWARD_CONFIGS[self.reward_mode]
 
     reward_sum = 0
     for event in events:
         if event in game_rewards:
             reward_sum += game_rewards[event]
+            
     self.logger.info(f"Awarded {reward_sum} for events {', '.join(events)}")
+
     return reward_sum
