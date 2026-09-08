@@ -21,7 +21,6 @@ EPSILON_DECAY = 0.995
 # PLACEHOLDER_EVENT = "PLACEHOLDER"
 MOVED_TOWARDS_COIN = "MOVED_TOWARDS_COIN"
 MOVED_AWAY_FROM_COIN = "MOVED_AWAY_FROM_COIN"
-MOVED_INTO_WALL = "MOVED_INTO_WALL"
 UNNECESSARILY_WAITED = "UNNECESSARILY_WAITED"
 OSCILLATION = "OSCILLATION"
 
@@ -95,21 +94,6 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
 
         elif new_distance > old_distance:
             events.append(MOVED_AWAY_FROM_COIN)
-
-    # Detect blocked movement
-    action_to_feature = {
-        "UP": 1,
-        "DOWN": 2,
-        "LEFT": 3,
-        "RIGHT": 4,
-    }
-
-    if self_action in action_to_feature:
-
-        feature_idx = action_to_feature[self_action]
-
-        if state[feature_idx] == 0:
-            events.append(MOVED_INTO_WALL)
 
     # Penalize unnecessary WAIT
     if self_action == "WAIT" and old_distance > 0:
@@ -192,7 +176,6 @@ def reward_from_events(self, events: List[str]) -> int:
         MOVED_TOWARDS_COIN: +1,
         MOVED_AWAY_FROM_COIN: -1,
 
-        MOVED_INTO_WALL: -1,
         UNNECESSARILY_WAITED: -0.5,
         OSCILLATION: -0.5,
 
