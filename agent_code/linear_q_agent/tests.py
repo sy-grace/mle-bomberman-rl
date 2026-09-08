@@ -36,6 +36,7 @@ class LinearQAgentTest(unittest.TestCase):
             "step": 1,
         }
 
+
     def test_features(self):
         field = np.ones((7, 7), dtype=int)  # walls/crates
         field[1:-1, 1:-1] = 0               # free interior
@@ -76,6 +77,77 @@ class LinearQAgentTest(unittest.TestCase):
             np.array([1, 1, 1, 0, 1, 0, 0])
         )
 
+
+    def test_features_all_directions_free(self):
+        """Test A: All directions are free."""
+        state = self._game_state()
+        features = state_to_features(state)
+
+        expected = [1, 1, 1, 1, 1]
+
+        np.testing.assert_array_equal(features[:5], expected)
+
+
+    def test_features_up_blocked(self):
+        """Test B: Up tile is blocked."""
+        state = self._game_state()
+
+        # UP of agent (3, 3) is (3, 2)
+        state["field"][3, 2] = 1
+        features = state_to_features(state)
+
+        expected = [1, 0, 1, 1, 1]
+        np.testing.assert_array_equal(features[:5], expected)
+
+
+    def test_features_coin_to_the_right(self):
+        """Test C: When there is a coin on the right"""
+        state = self._game_state()
+
+        # There is a coin at (5, 3), and the agent is at (3, 3)
+        state["coins"] = [(5, 3)]
+        features = state_to_features(state)
+
+        expected = [2/6, 0]
+        np.testing.assert_allclose(features[5:], expected)
+
+
+    def test_features_nearest_coin_select(self):
+        """Test D: Check if the agent chooses the nearest coin among all coins."""
+        state = self._game_state()
+
+        # There are two coins: one at (5, 4), and the other at (2, 2)
+        state["coins"] = [(5, 4), (2, 2)]
+        features = state_to_features(state)
+
+        expected = [-1/6, -1/6]
+        np.testing.assert_allclose(features[5:], expected)
+
+
+    def test_features_no_coin(self):
+        """Test E: No coin in the field."""
+        state = self._game_state()
+
+        # There is no coin in the field
+        state["coins"] = []
+        features = state_to_features(state)
+
+        expected = [0, 0]
+        np.testing.assert_allclose(features[5:], expected)
+        
+
+    def test_features_agent_in_corner(self):
+        """Test F: Agent is at a walkable corner next to border walls."""
+        state = self._game_state()
+
+        # The agent is in the corner
+        state["self"] = ("player", 0, 1, (5, 5))
+        features = state_to_features(state)
+
+        expected = [1, 1, 0, 1, 0]
+        np.testing.assert_array_equal(features[:5], expected)
+        
+
     def test_predict_returns_one_value_per_action(self):
         model = Linear_QNet(input_size=7, output_size=6, seed=1)
         features = np.ones(7)
@@ -84,6 +156,7 @@ class LinearQAgentTest(unittest.TestCase):
 
         self.assertEqual(q_values.shape, (6,))
         self.assertTrue(np.isfinite(q_values).all())
+
 
     def test_terminal_update_changes_only_selected_action(self):
         model = Linear_QNet(
@@ -110,6 +183,7 @@ class LinearQAgentTest(unittest.TestCase):
         np.testing.assert_allclose(model.weights[:, 1], expected_weights)
         np.testing.assert_allclose(model.weights[:, 0], old_weights[:, 0])
 
+
     def test_non_terminal_update_uses_next_state_value(self):
         model = Linear_QNet(
             input_size=2,
@@ -134,6 +208,7 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertAlmostEqual(td_error, 2.5)
         np.testing.assert_allclose(model.weights[:, 0], [0.25, 0.5])
 
+
     def test_act_explores_when_random_value_is_below_epsilon(self):
         agent = SimpleNamespace(
             train=True,
@@ -151,6 +226,7 @@ class LinearQAgentTest(unittest.TestCase):
         choice.assert_called_once_with(callbacks.ACTIONS)
         agent.model.predict.assert_not_called()
 
+
     def test_act_exploits_highest_q_value_when_not_exploring(self):
         agent = SimpleNamespace(
             train=True,
@@ -165,6 +241,7 @@ class LinearQAgentTest(unittest.TestCase):
 
         self.assertEqual(action, "RIGHT")
         agent.model.predict.assert_called_once()
+
 
     def test_game_event_updates_selected_action_without_decaying_epsilon(self):
         agent = SimpleNamespace(
@@ -196,6 +273,7 @@ class LinearQAgentTest(unittest.TestCase):
         np.testing.assert_allclose(update_next_state, next_state)
         self.assertAlmostEqual(agent.epsilon, 0.5)
 
+
     def test_terminal_event_updates_with_no_next_state(self):
         agent = SimpleNamespace(
             model=Mock(),
@@ -217,6 +295,7 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertEqual(reward, -1.0)
         self.assertIsNone(next_state)
         self.assertAlmostEqual(agent.epsilon, 0.5 * 0.995)
+
 
     def test_training_checkpoint_reloads_for_evaluation(self):
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(
