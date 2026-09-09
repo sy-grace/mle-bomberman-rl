@@ -322,11 +322,10 @@ class LinearQAgentTest(unittest.TestCase):
 
 
     def test_excluded_custom_events_have_zero_reward(self):
-        """Reward Test E: Test that excluded custom events contribute zero reward in all modes."""
+        """Reward Test E: Test that excluded custom event contributes zero reward in all modes."""
         agent = SimpleNamespace(logger=Mock())
 
         events = [
-            train.MOVED_INTO_WALL,
             train.OSCILLATION
         ]
 

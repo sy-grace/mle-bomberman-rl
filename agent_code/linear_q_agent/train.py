@@ -197,18 +197,7 @@ def reward_from_events(self, events: List[str]) -> float:
     """
     Here we can modify the rewards the agent get so as to en/discourage certain behavior.
     """
-    game_rewards = {
-        e.COIN_COLLECTED: +10,
-
-        MOVED_TOWARDS_COIN: +1,
-        MOVED_AWAY_FROM_COIN: -1,
-
-        UNNECESSARILY_WAITED: -0.5,
-        OSCILLATION: -0.5,
-
-        e.BOMB_DROPPED: -5,
-        e.INVALID_ACTION: -2,
-    }
+    game_rewards = REWARD_CONFIGS[self.reward_mode]
 
     reward_sum = 0
     for event in events:
