@@ -345,3 +345,78 @@ class LinearQAgentTest(unittest.TestCase):
                     )))
                 ],
             )
+
+    def test_reward_mode_default_to_basic(self):
+        """Reward Test A: Test that the default reward mode is "basic" when no environment is set."""
+        agent = SimpleNamespace(logger=Mock())
+
+        with patch.dict(os.environ, {}, clear=True):
+            train.setup_training(agent)
+
+        self.assertEqual(agent.reward_mode, "basic")
+
+
+    def test_reward_from_environment(self):
+        """Reward Test B: Test that the reward mode is read from the environment variable."""
+        agent = SimpleNamespace(logger=Mock())
+
+        with patch.dict(os.environ, {"BOMBERMAN_REWARD_MODE": "sparse"}, clear=True):
+            train.setup_training(agent)
+
+        self.assertEqual(agent.reward_mode, "sparse")
+
+
+    def test_invalid_reward_mode_raises(self):
+        """Reward Test C: Test that an invalid reward mode raises a ValueError."""
+        agent = SimpleNamespace(logger=Mock())
+
+        with patch.dict(os.environ, {"BOMBERMAN_REWARD_MODE": "grape"}, clear=True):
+            with self.assertRaises(ValueError):
+                train.setup_training(agent)
+
+
+    def test_reward_values_differ_by_mode(self):
+        """Reward Test D: Test reward calculation for sparse, basic, and shaped modes."""
+        agent = SimpleNamespace(logger=Mock())
+
+        events = [
+            game_events.COIN_COLLECTED, # +10
+            game_events.INVALID_ACTION, # -2
+            train.MOVED_TOWARDS_COIN,   # +1
+            train.UNNECESSARILY_WAITED  # -0.5
+        ]
+
+        agent.reward_mode = "sparse"
+        reward_sparse = train.reward_from_events(agent, events)
+
+        agent.reward_mode = "basic"
+        reward_basic = train.reward_from_events(agent, events)
+        
+        agent.reward_mode = "shaped"
+        reward_shaped = train.reward_from_events(agent, events)
+        
+        self.assertAlmostEqual(reward_sparse, 10)
+        self.assertAlmostEqual(reward_basic, 8)
+        self.assertAlmostEqual(reward_shaped, 8.5)
+
+
+    def test_excluded_custom_events_have_zero_reward(self):
+        """Reward Test E: Test that excluded custom event contributes zero reward in all modes."""
+        agent = SimpleNamespace(logger=Mock())
+
+        events = [
+            train.OSCILLATION
+        ]
+
+        agent.reward_mode = "sparse"
+        reward_sparse = train.reward_from_events(agent, events)
+
+        agent.reward_mode = "basic"
+        reward_basic = train.reward_from_events(agent, events)
+        
+        agent.reward_mode = "shaped"
+        reward_shaped = train.reward_from_events(agent, events)
+        
+        self.assertEqual(reward_sparse, 0)
+        self.assertEqual(reward_basic, 0)
+        self.assertEqual(reward_shaped, 0)
