@@ -41,7 +41,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_features_all_directions_free(self):
         """Test A: All directions are free."""
         state = self._game_state()
-        features = state_to_features(state)
+        features = state_to_features(state, "f1")
 
         expected = [1, 1, 1, 1, 1]
 
@@ -54,7 +54,7 @@ class LinearQAgentTest(unittest.TestCase):
 
         # UP of agent (3, 3) is (3, 2)
         state["field"][3, 2] = 1
-        features = state_to_features(state)
+        features = state_to_features(state, "f1")
 
         expected = [1, 0, 1, 1, 1]
         np.testing.assert_array_equal(features[:5], expected)
@@ -66,7 +66,7 @@ class LinearQAgentTest(unittest.TestCase):
 
         # There is a coin at (5, 3), and the agent is at (3, 3)
         state["coins"] = [(5, 3)]
-        features = state_to_features(state)
+        features = state_to_features(state, "f1")
 
         expected = [2/6, 0]
         np.testing.assert_allclose(features[5:7], expected)
@@ -78,7 +78,7 @@ class LinearQAgentTest(unittest.TestCase):
 
         # There are two coins: one at (5, 4), and the other at (2, 2)
         state["coins"] = [(5, 4), (2, 2)]
-        features = state_to_features(state)
+        features = state_to_features(state, "f1")
 
         expected = [-1/6, -1/6]
         np.testing.assert_allclose(features[5:7], expected)
@@ -90,7 +90,7 @@ class LinearQAgentTest(unittest.TestCase):
 
         # There is no coin in the field
         state["coins"] = []
-        features = state_to_features(state)
+        features = state_to_features(state, "f1")
 
         expected = [0, 0]
         np.testing.assert_allclose(features[5:7], expected)
@@ -102,7 +102,7 @@ class LinearQAgentTest(unittest.TestCase):
 
         # The agent is in the corner
         state["self"] = ("player", 0, 1, (5, 5))
-        features = state_to_features(state)
+        features = state_to_features(state, "f1")
 
         expected = [1, 1, 0, 1, 0]
         np.testing.assert_array_equal(features[:5], expected)
@@ -175,6 +175,7 @@ class LinearQAgentTest(unittest.TestCase):
             epsilon=0.5,
             model=Mock(),
             logger=Mock(),
+            feature_mode="f1"
         )
 
         with patch.object(callbacks.random, "random", return_value=0.1), patch.object(
@@ -193,6 +194,7 @@ class LinearQAgentTest(unittest.TestCase):
             epsilon=0.5,
             model=Mock(),
             logger=Mock(),
+            feature_mode="f1"
         )
         agent.model.predict.return_value = np.array([1.0, 4.0, 2.0, 0.0, 3.0])
 
@@ -211,6 +213,7 @@ class LinearQAgentTest(unittest.TestCase):
             epsilon_min=0.05,
             epsilon_decay=0.995,
             transitions=[],
+            feature_mode="f1"
         )
         old_state = self._game_state()
         new_state = self._game_state()
@@ -221,8 +224,8 @@ class LinearQAgentTest(unittest.TestCase):
         state, action, next_state, reward = agent.transitions[-1]
         self.assertEqual(action, "LEFT")
         self.assertEqual(reward, 2.0)
-        np.testing.assert_allclose(state, state_to_features(old_state))
-        np.testing.assert_allclose(next_state, state_to_features(new_state))
+        np.testing.assert_allclose(state, state_to_features(old_state, "f1"))
+        np.testing.assert_allclose(next_state, state_to_features(new_state, "f1"))
         agent.model.update.assert_called_once()
         update_state, update_action, update_reward, update_next_state = (
             agent.model.update.call_args.args
@@ -242,6 +245,7 @@ class LinearQAgentTest(unittest.TestCase):
             epsilon_min=0.05,
             epsilon_decay=0.995,
             transitions=[],
+            feature_mode="f1"
         )
 
         with patch.object(train, "reward_from_events", return_value=-1.0), patch(
@@ -335,7 +339,7 @@ class LinearQAgentTest(unittest.TestCase):
 
     def test_coin_collection_skips_distance_shaping(self):
         """Reward Test F: Test that no distance-shaping event is added when a coin is collected."""
-        agent = SimpleNamespace(model=Mock(), logger=Mock(), transitions=[])
+        agent = SimpleNamespace(model=Mock(), logger=Mock(), transitions=[], feature_mode="f1")
 
         old_state = self._game_state()
         new_state = self._game_state()
@@ -359,7 +363,7 @@ class LinearQAgentTest(unittest.TestCase):
         state = self._game_state()
         state["coins"] = [(4, 3)]
 
-        features = state_to_features(state)
+        features = state_to_features(state, "f1")
         
         expected = [0, 0, 0, 1]
 
@@ -375,7 +379,7 @@ class LinearQAgentTest(unittest.TestCase):
         state["field"][4, 3] = 1
         state["field"][4, 4] = 1
 
-        features = state_to_features(state)
+        features = state_to_features(state, "f1")
 
         expected = [0, 1, 0, 0]
 
@@ -387,7 +391,7 @@ class LinearQAgentTest(unittest.TestCase):
         state = self._game_state()
         state["coins"] = [(4, 4)]
 
-        features = state_to_features(state)
+        features = state_to_features(state, "f1")
 
         expected = [0, 1, 0, 1]
 
@@ -411,7 +415,7 @@ class LinearQAgentTest(unittest.TestCase):
 
         state["self"] = ("player", 0, 1, (1, 1))
 
-        features = state_to_features(state)
+        features = state_to_features(state, "f1")
 
         expected = [0, 0, 0, 0]
 
@@ -423,7 +427,7 @@ class LinearQAgentTest(unittest.TestCase):
         state = self._game_state()
         state["coins"] = [(3, 3)]
 
-        features = state_to_features(state)
+        features = state_to_features(state, "f1")
 
         expected = [0, 0, 0, 0]
 
@@ -435,7 +439,7 @@ class LinearQAgentTest(unittest.TestCase):
         state = self._game_state()
         state["coins"] = [(2, 3), (5, 3)]
 
-        features = state_to_features(state)
+        features = state_to_features(state, "f1")
 
         expected = [0, 0, 1, 0]
 
@@ -445,7 +449,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_model_start_mode_defaults_to_resume(self):
         """Model Start Test A: Test that the default model start mode is 'resume'."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZE, output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -483,7 +487,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_fresh_training_ignores_existing_checkpoint(self):
         """Model Start Test D: Test that fresh training ignores an existing checkpoint and initializes a new model."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZE, output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -501,7 +505,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_resume_training_loads_existing_checkpoint(self):
         """Model Start Test E: Test that resume training loads an existing checkpoint when available."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZE, output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -519,7 +523,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_evaluation_loads_checkpoint_independent_of_start_mode(self):
         """Model Start Test F: Test that evaluation loads the checkpoint regardless of the training start mode."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZE, output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -542,3 +546,67 @@ class LinearQAgentTest(unittest.TestCase):
             with patch.dict(os.environ, {"MODEL_START_MODE": "resume"}, clear=True):
                 with self.assertRaises(FileNotFoundError):
                     callbacks.setup(agent)
+
+
+    def test_feature_mode_defaults_to_f1(self):
+        """Feature Mode Test A: Test that the default feature mode is F1 with 11 features."""
+        with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+
+            with open("my-saved-model.pt", "wb") as file:
+                pickle.dump({"model": model, "epsilon": 0.25}, file)
+
+            agent = SimpleNamespace(train=True, logger=Mock())
+
+            with patch.dict(os.environ, {}, clear=True):
+                callbacks.setup(agent)
+
+            self.assertEqual(agent.feature_mode, "f1")
+            self.assertEqual(agent.feature_size, 11)
+
+
+    def test_feature_mode_f0_creates_seven_feature_model(self):
+        """Feature Mode Test B: Test that F0 uses 7 features for a fresh model."""
+        with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
+            agent = SimpleNamespace(train=True, logger=Mock())
+
+            with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "FEATURE_MODE": "f0"}, clear=True):
+                callbacks.setup(agent)
+
+            self.assertEqual(agent.feature_mode, "f0")
+            self.assertEqual(agent.feature_size, 7)
+            self.assertEqual(agent.model.input_size, 7)
+
+
+    def test_invalid_feature_mode_raises(self):
+        """Feature Mode Test C: Test that unsupported feature modes raise a ValueError."""
+        with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
+            agent = SimpleNamespace(train=True, logger=Mock())
+
+            with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "FEATURE_MODE": "grape"}, clear=True):
+                with self.assertRaises(ValueError):
+                    callbacks.setup(agent)
+
+
+    def test_f0_feature_vector_has_seven_features(self):
+        """Feature Mode Test D: Test that F0 returns a 7-dimensional feature vector."""
+        state = self._game_state()
+        features = state_to_features(state, "f0")
+        self.assertEqual(features.shape, (7,))
+
+
+    def test_f1_feature_vector_has_eleven_features(self):
+        """Feature Mode Test E: Test that F1 returns a 11-dimensional feature vector."""
+        state = self._game_state()
+        features = state_to_features(state, "f1")
+        self.assertEqual(features.shape, (11,))
+
+
+    def test_f0_matches_first_seven_f1_features(self):
+        """Feature Mode Test F: Test that F0 matches the first seven features of F1."""
+        state = self._game_state()
+
+        f0 = state_to_features(state, "f0")
+        f1 = state_to_features(state, "f1")
+
+        np.testing.assert_allclose(f0, f1[:7])

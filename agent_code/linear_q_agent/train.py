@@ -101,8 +101,8 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     self.logger.debug(f'Encountered game event(s) {", ".join(map(repr, events))} in step {new_game_state["step"]}')
 
     # state_to_features is defined in callbacks.py
-    state = state_to_features(old_game_state)
-    next_state = state_to_features(new_game_state)
+    state = state_to_features(old_game_state, self.feature_mode)
+    next_state = state_to_features(new_game_state, self.feature_mode)
 
     # Custom events based on coin proximity and movement
     # Coin distance
@@ -170,7 +170,7 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
     :param self: The same object that is passed to all of the callbacks.
     """
     self.logger.debug(f'Encountered event(s) {", ".join(map(repr, events))} in final step')
-    state = state_to_features(last_game_state)
+    state = state_to_features(last_game_state, self.feature_mode)
     reward = reward_from_events(self, events)
     action = ACTION_TO_INDEX[last_action]
     self.model.update(state, action, reward, None)
