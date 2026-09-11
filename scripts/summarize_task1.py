@@ -8,7 +8,7 @@ from statistics import mean, median
 
 
 RESULT_ROOT = Path("results/task1/linear_q_agent")
-OUTPUT_CSV = RESULT_ROOT / "task1_summary.csv"
+OUTPUT_CSV = Path("docs/experiments/task1_linear_q_summary.csv")
 
 RUN_PATTERN = re.compile(
     r"^(f[01])_(sparse|basic|shaped)_seed(\d+)$"
@@ -186,12 +186,14 @@ def save_csv(results):
         "completed_avg_steps",
     ]
 
+    OUTPUT_CSV.parent.mkdir(parents=True, exist_ok=True)
+
     with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(results)
 
-    print(f"Saved CSV: {OUTPUT_CSV}")
+    print(f"Saved shareable summary: {OUTPUT_CSV}")
 
 
 def main():
