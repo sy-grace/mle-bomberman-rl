@@ -7,7 +7,7 @@ import numpy as np
 from .model import Linear_QNet
 
 
-ACTIONS = ['UP', 'RIGHT', 'DOWN', 'LEFT', 'WAIT', 'BOMB']
+ACTIONS = ['UP', 'RIGHT', 'DOWN', 'LEFT', 'WAIT']
 EPSILON_START = 1.0
 MODEL_START_MODE = "resume"  # Set to "fresh" to ignore an existing checkpoint.
 
