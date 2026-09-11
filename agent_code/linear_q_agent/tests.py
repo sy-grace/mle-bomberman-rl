@@ -409,6 +409,18 @@ class LinearQAgentTest(unittest.TestCase):
         np.testing.assert_array_equal(features[7:11], expected)
 
 
+    def test_shortest_path_uses_nearest_coin(self):
+        """Path Test F: Test that path directions are computed for the nearest coin."""
+        state = self._game_state()
+        state["coins"] = [(2, 3), (5, 3)]
+
+        features = state_to_features(state)
+
+        expected = [0, 0, 1, 0]
+
+        np.testing.assert_array_equal(features[7:11], expected)
+
+
     def test_model_start_mode_defaults_to_resume(self):
         """Model Start Test A: Test that the default model start mode is 'resume'."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):

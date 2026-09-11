@@ -146,7 +146,7 @@ def state_to_features(game_state: dict) -> np.ndarray:
                 closest_coin = coin
 
         if closest_coin is not None:
-            path_directions = shortest_path_directions(field, agent[3], coin)
+            path_directions = shortest_path_directions(field, agent[3], closest_coin)
             features[7:11] = path_directions
 
     # Return the final feature vector
