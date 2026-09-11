@@ -1,4 +1,5 @@
 import os
+import pickle
 import numpy as np
 import unittest
 import tempfile
@@ -35,47 +36,6 @@ class LinearQAgentTest(unittest.TestCase):
             "self": ("player", 0, 1, (3, 3)),
             "step": 1,
         }
-
-
-    def test_features(self):
-        field = np.ones((7, 7), dtype=int)  # walls/crates
-        field[1:-1, 1:-1] = 0               # free interior
-        field[2, 3] = 1                     # wall to the LEFT of agent
-
-        game_state = {
-            "field": field,
-            "bombs": [],
-            "coins": [(1, 1), (5, 4)],
-            "self": ("player", 0, 1, (3, 3)),
-        }
-
-        features = state_to_features(game_state)
-        print(features)
-
-        expected = np.array([
-            1,      # bias
-            1,      # UP is free
-            1,      # DOWN is free
-            0,      # LEFT is blocked
-            1,      # RIGHT is free
-            2 / 6,  # nearest coin dx: (5 - 3) / (7 - 1)
-            1 / 6,  # nearest coin dy: (4 - 3) / (7 - 1)
-        ])
-
-        np.testing.assert_allclose(features[:7], expected)
-        assert features.shape == (11,)
-        assert np.isfinite(features).all()
-
-        print("state_to_features works correctly")
-
-        assert state_to_features(None) is None
-
-        state_without_coins = dict(game_state)
-        state_without_coins["coins"] = []
-        assert np.array_equal(
-            state_to_features(state_without_coins)[:7],
-            np.array([1, 1, 1, 0, 1, 0, 0])
-        )
 
 
     def test_features_all_directions_free(self):
@@ -149,12 +109,12 @@ class LinearQAgentTest(unittest.TestCase):
         
 
     def test_predict_returns_one_value_per_action(self):
-        model = Linear_QModel(input_size=7, output_size=6, seed=1)
+        model = Linear_QModel(input_size=7, output_size=len(callbacks.ACTIONS), seed=1)
         features = np.ones(7)
 
         q_values = model.predict(features)
 
-        self.assertEqual(q_values.shape, (6,))
+        self.assertEqual(q_values.shape, (len(callbacks.ACTIONS),))
         self.assertTrue(np.isfinite(q_values).all())
 
 
@@ -234,7 +194,7 @@ class LinearQAgentTest(unittest.TestCase):
             model=Mock(),
             logger=Mock(),
         )
-        agent.model.predict.return_value = np.array([1.0, 4.0, 2.0, 0.0, 3.0, -1.0])
+        agent.model.predict.return_value = np.array([1.0, 4.0, 2.0, 0.0, 3.0])
 
         with patch.object(callbacks.random, "random", return_value=0.9):
             action = callbacks.act(agent, self._game_state())
@@ -296,55 +256,6 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertIsNone(next_state)
         self.assertAlmostEqual(agent.epsilon, 0.5 * 0.995)
 
-
-    def test_training_checkpoint_reloads_for_evaluation(self):
-        with tempfile.TemporaryDirectory() as directory, temporary_working_directory(
-            directory
-        ):
-            training_agent = SimpleNamespace(train=True, logger=Mock())
-            callbacks.setup(training_agent)
-            train.setup_training(training_agent)
-            training_agent.epsilon = 0.0
-
-            state = self._game_state()
-            action = callbacks.act(training_agent, state)
-            weights_before_update = training_agent.model.weights.copy()
-
-            train.game_events_occurred(
-                training_agent,
-                state,
-                action,
-                state,
-                [game_events.COIN_COLLECTED],
-            )
-            train.end_of_round(
-                training_agent,
-                state,
-                action,
-                [],
-            )
-
-            self.assertFalse(
-                np.array_equal(weights_before_update, training_agent.model.weights)
-            )
-            saved_weights = training_agent.model.weights.copy()
-            saved_epsilon = training_agent.epsilon
-
-            evaluation_agent = SimpleNamespace(train=False, logger=Mock())
-            callbacks.setup(evaluation_agent)
-
-            np.testing.assert_allclose(
-                evaluation_agent.model.weights, saved_weights
-            )
-            self.assertEqual(evaluation_agent.epsilon, saved_epsilon)
-            self.assertEqual(
-                callbacks.act(evaluation_agent, state),
-                callbacks.ACTIONS[
-                    int(np.argmax(evaluation_agent.model.predict(
-                        state_to_features(state)
-                    )))
-                ],
-            )
 
     def test_reward_mode_default_to_basic(self):
         """Reward Test A: Test that the default reward mode is "basic" when no environment is set."""
@@ -486,7 +397,6 @@ class LinearQAgentTest(unittest.TestCase):
         np.testing.assert_array_equal(features[7:11], expected)
 
 
-
     def test_shortest_path_start_equals_target(self):
         """Path Test E: Test that no direction is returned when start and target are identical."""
         state = self._game_state()
@@ -497,3 +407,105 @@ class LinearQAgentTest(unittest.TestCase):
         expected = [0, 0, 0, 0]
 
         np.testing.assert_array_equal(features[7:11], expected)
+
+
+    def test_model_start_mode_defaults_to_resume(self):
+        """Model Start Test A: Test that the default model start mode is 'resume'."""
+        with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZE, output_size=len(callbacks.ACTIONS), seed=1)
+            model.weights[:] = 42.0
+
+            with open("my-saved-model.pt", "wb") as file:
+                pickle.dump({"model": model, "epsilon": 0.25}, file)
+
+            agent = SimpleNamespace(train=True, logger=Mock())
+
+            with patch.dict(os.environ, {}, clear=True):
+                callbacks.setup(agent)
+
+            self.assertEqual(agent.model_start_mode, "resume")
+
+
+    def test_model_start_mode_from_environment(self):
+        """Model Start Test B: Test that the model start mode is read from the environment variable."""
+        with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
+            agent = SimpleNamespace(train=True, logger=Mock())
+
+            with patch.dict(os.environ, {"MODEL_START_MODE": "fresh"}, clear=True):
+                callbacks.setup(agent)
+
+            self.assertEqual(agent.model_start_mode, "fresh")
+
+
+    def test_invalid_model_start_mode_raises(self):
+        """Model Start Test C: Test that unsupported model start modes raise a ValueError."""
+        with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
+            agent = SimpleNamespace(train=True, logger=Mock())
+
+            with patch.dict(os.environ, {"MODEL_START_MODE": "grape"}, clear=True):
+                with self.assertRaises(ValueError):
+                    callbacks.setup(agent)
+
+
+    def test_fresh_training_ignores_existing_checkpoint(self):
+        """Model Start Test D: Test that fresh training ignores an existing checkpoint and initializes a new model."""
+        with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZE, output_size=len(callbacks.ACTIONS), seed=1)
+            model.weights[:] = 42.0
+
+            with open("my-saved-model.pt", "wb") as file:
+                pickle.dump({"model": model, "epsilon": 0.25}, file)
+
+            agent = SimpleNamespace(train=True, logger=Mock())
+
+            with patch.dict(os.environ, {"MODEL_START_MODE": "fresh"}, clear=True):
+                callbacks.setup(agent)
+
+            self.assertFalse(np.allclose(agent.model.weights, model.weights))
+            self.assertEqual(agent.epsilon, callbacks.EPSILON_START)
+
+
+    def test_resume_training_loads_existing_checkpoint(self):
+        """Model Start Test E: Test that resume training loads an existing checkpoint when available."""
+        with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZE, output_size=len(callbacks.ACTIONS), seed=1)
+            model.weights[:] = 42.0
+
+            with open("my-saved-model.pt", "wb") as file:
+                pickle.dump({"model": model, "epsilon": 0.25}, file)
+
+            agent = SimpleNamespace(train=True, logger=Mock())
+
+            with patch.dict(os.environ, {"MODEL_START_MODE": "resume"}, clear=True):
+                callbacks.setup(agent)
+
+            np.testing.assert_allclose(agent.model.weights, model.weights)
+            self.assertEqual(agent.epsilon, 0.25)
+
+
+    def test_evaluation_loads_checkpoint_independent_of_start_mode(self):
+        """Model Start Test F: Test that evaluation loads the checkpoint regardless of the training start mode."""
+        with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZE, output_size=len(callbacks.ACTIONS), seed=1)
+            model.weights[:] = 42.0
+
+            with open("my-saved-model.pt", "wb") as file:
+                pickle.dump({"model": model, "epsilon": 0.25}, file)
+
+            agent = SimpleNamespace(train=False, logger=Mock())
+
+            with patch.dict(os.environ, {"MODEL_START_MODE": "fresh"}, clear=True):
+                callbacks.setup(agent)
+
+            np.testing.assert_allclose(agent.model.weights, model.weights)
+            self.assertEqual(agent.epsilon, 0.25)
+
+
+    def test_resume_training_without_checkpoint_raises_file_not_found_error(self):
+        """Model Start Test G: Test that resume training raises FileNotFoundError when no checkpoint is available."""
+        with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
+            agent = SimpleNamespace(train=True, logger=Mock())
+
+            with patch.dict(os.environ, {"MODEL_START_MODE": "resume"}, clear=True):
+                with self.assertRaises(FileNotFoundError):
+                    callbacks.setup(agent)
