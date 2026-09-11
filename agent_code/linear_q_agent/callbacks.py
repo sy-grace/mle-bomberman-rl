@@ -23,6 +23,13 @@ def setup(self):
 
     :param self: This object is passed to all callbacks and you can set arbitrary values.
     """
+    # Seed
+    seed_value = os.getenv("EXPERIMENT_SEED", "0")
+    self.experiment_seed = int(seed_value)
+    self.rng = random.Random(self.experiment_seed)
+    self.logger.info(f"Experiment seed: {self.experiment_seed}")
+
+    # Model Start Mode
     self.model_start_mode = os.getenv("MODEL_START_MODE", "resume")
 
     # Check if the model_start_mode is either "resume" or "fresh"
@@ -43,7 +50,7 @@ def setup(self):
     if self.train and self.model_start_mode == "fresh":
         # Initialize fresh model
         self.logger.info("Setting up model from scratch.")
-        self.model = Linear_QModel(input_size=self.feature_size, output_size=len(ACTIONS))
+        self.model = Linear_QModel(input_size=self.feature_size, output_size=len(ACTIONS), seed=self.experiment_seed)
         self.epsilon = EPSILON_START
     else:
         if not checkpoint_exists:
@@ -69,13 +76,12 @@ def act(self, game_state: dict) -> str:
     """
     Agent should parse the input, think, and take a decision.
     """
-
     features = state_to_features(game_state, self.feature_mode)
 
     # Exploration during training
-    if self.train and random.random() < self.epsilon:
+    if self.train and self.rng.random() < self.epsilon:
         self.logger.debug("Choosing action purely at random.")
-        return random.choice(ACTIONS)
+        return self.rng.choice(ACTIONS)
 
     # Exploitation
     q_values = self.model.predict(features)

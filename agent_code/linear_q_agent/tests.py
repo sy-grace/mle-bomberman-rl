@@ -175,16 +175,16 @@ class LinearQAgentTest(unittest.TestCase):
             epsilon=0.5,
             model=Mock(),
             logger=Mock(),
-            feature_mode="f1"
+            feature_mode="f1",
+            rng=Mock()
         )
 
-        with patch.object(callbacks.random, "random", return_value=0.1), patch.object(
-            callbacks.random, "choice", return_value="WAIT"
-        ) as choice:
-            action = callbacks.act(agent, self._game_state())
+        agent.rng.random.return_value = 0.1
+        agent.rng.choice.return_value = "WAIT"
+        action = callbacks.act(agent, self._game_state())
 
         self.assertEqual(action, "WAIT")
-        choice.assert_called_once_with(callbacks.ACTIONS)
+        agent.rng.choice.assert_called_once_with(callbacks.ACTIONS)
         agent.model.predict.assert_not_called()
 
 
@@ -194,12 +194,13 @@ class LinearQAgentTest(unittest.TestCase):
             epsilon=0.5,
             model=Mock(),
             logger=Mock(),
-            feature_mode="f1"
+            feature_mode="f1",
+            rng=Mock()
         )
         agent.model.predict.return_value = np.array([1.0, 4.0, 2.0, 0.0, 3.0])
 
-        with patch.object(callbacks.random, "random", return_value=0.9):
-            action = callbacks.act(agent, self._game_state())
+        agent.rng.random.return_value = 0.9
+        action = callbacks.act(agent, self._game_state())
 
         self.assertEqual(action, "RIGHT")
         agent.model.predict.assert_called_once()
@@ -626,3 +627,35 @@ class LinearQAgentTest(unittest.TestCase):
             with patch.dict(os.environ, {"MODEL_START_MODE": "resume", "FEATURE_MODE": "f0"}, clear=True):
                 with self.assertRaises(ValueError):
                     callbacks.setup(agent)
+
+
+    def test_same_experiment_seed_reproduces_model_and_rng(self):
+        """Experiment Seed Test A: Test that the same experiment seed reproduces model initialization and RNG sequence."""
+        with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
+            agent_a = SimpleNamespace(train=True, logger=Mock())
+            agent_b = SimpleNamespace(train=True, logger=Mock())
+
+            with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "EXPERIMENT_SEED": "123"}, clear=True):
+                callbacks.setup(agent_a)
+                callbacks.setup(agent_b)
+
+            self.assertEqual(agent_a.experiment_seed, 123)
+            self.assertEqual(agent_b.experiment_seed, 123)
+
+            np.testing.assert_allclose(agent_a.model.weights, agent_b.model.weights)
+            self.assertEqual(agent_a.rng.random(), agent_b.rng.random())
+
+
+    def test_different_experiment_seeds_produce_different_model_initializations(self):
+        """Experiment Seed Test B: Test that different experiment seeds produce different model initializations."""
+        with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
+            agent_a = SimpleNamespace(train=True, logger=Mock())
+            agent_b = SimpleNamespace(train=True, logger=Mock())
+
+            with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "EXPERIMENT_SEED": "123"}, clear=True):
+                callbacks.setup(agent_a)
+
+            with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "EXPERIMENT_SEED": "456"}, clear=True):
+                callbacks.setup(agent_b)
+
+            self.assertFalse(np.allclose(agent_a.model.weights, agent_b.model.weights))
