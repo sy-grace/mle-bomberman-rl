@@ -333,6 +333,27 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertEqual(reward_shaped, 0)
 
 
+    def test_coin_collection_skips_distance_shaping(self):
+        """Reward Test F: Test that no distance-shaping event is added when a coin is collected."""
+        agent = SimpleNamespace(model=Mock(), logger=Mock(), transitions=[])
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = [(4, 3), (1, 1)]
+
+        new_state["self"] = ("player", 1, 1, (4, 3))
+        new_state["coins"] = [(1, 1)]
+
+        events = [game_events.COIN_COLLECTED]
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertNotIn(train.MOVED_AWAY_FROM_COIN, events)
+        self.assertNotIn(train.MOVED_TOWARDS_COIN, events)
+
+
     def test_shortest_path_direction_right(self):
         """Path Test A: Test that a target directly to the right returns RIGHT as the valid first step."""
         state = self._game_state()
