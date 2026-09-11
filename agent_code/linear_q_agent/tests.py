@@ -218,11 +218,11 @@ class LinearQAgentTest(unittest.TestCase):
         )
 
         with patch.object(callbacks.random, "random", return_value=0.1), patch.object(
-            callbacks.random, "choice", return_value="BOMB"
+            callbacks.random, "choice", return_value="WAIT"
         ) as choice:
             action = callbacks.act(agent, self._game_state())
 
-        self.assertEqual(action, "BOMB")
+        self.assertEqual(action, "WAIT")
         choice.assert_called_once_with(callbacks.ACTIONS)
         agent.model.predict.assert_not_called()
 
@@ -287,11 +287,11 @@ class LinearQAgentTest(unittest.TestCase):
         with patch.object(train, "reward_from_events", return_value=-1.0), patch(
             "builtins.open"
         ), patch.object(train.pickle, "dump"):
-            train.end_of_round(agent, self._game_state(), "BOMB", [])
+            train.end_of_round(agent, self._game_state(), "RIGHT", [])
 
         agent.model.update.assert_called_once()
         _, action, reward, next_state = agent.model.update.call_args.args
-        self.assertEqual(action, train.ACTION_TO_INDEX["BOMB"])
+        self.assertEqual(action, train.ACTION_TO_INDEX["RIGHT"])
         self.assertEqual(reward, -1.0)
         self.assertIsNone(next_state)
         self.assertAlmostEqual(agent.epsilon, 0.5 * 0.995)

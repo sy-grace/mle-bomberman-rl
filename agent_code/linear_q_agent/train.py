@@ -51,7 +51,6 @@ ACTION_TO_INDEX = {
     "DOWN": 2,
     "LEFT": 3,
     "WAIT": 4,
-    "BOMB": 5
 }
 
 

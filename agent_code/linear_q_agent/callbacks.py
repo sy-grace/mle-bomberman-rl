@@ -7,7 +7,7 @@ from collections import deque
 from .model import Linear_QModel
 
 
-ACTIONS = ['UP', 'RIGHT', 'DOWN', 'LEFT', 'WAIT', 'BOMB']
+ACTIONS = ['UP', 'RIGHT', 'DOWN', 'LEFT', 'WAIT']
 EPSILON_START = 1.0
 MODEL_START_MODE = "resume"  # Set to "fresh" to ignore an existing checkpoint.
 FEATURE_SIZE = 11
