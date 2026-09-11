@@ -9,7 +9,7 @@ from .model import Linear_QModel
 
 ACTIONS = ['UP', 'RIGHT', 'DOWN', 'LEFT', 'WAIT']
 EPSILON_START = 1.0
-FEATURE_SIZE = 11
+FEATURE_SIZES = {"f0": 7, "f1": 11}
 
 
 def setup(self):
@@ -28,14 +28,22 @@ def setup(self):
     # Check if the model_start_mode is either "resume" or "fresh"
     if self.model_start_mode not in {"resume", "fresh"}:
         raise ValueError("MODEL_START_MODE must be either 'resume' or 'fresh'.")
+    
+    self.feature_mode = os.getenv("FEATURE_MODE", "f1")
 
+    if self.feature_mode not in FEATURE_SIZES:
+        raise ValueError("FEATURE_MODE must be either 'f0' or 'f1'.")
+
+    self.feature_size = FEATURE_SIZES[self.feature_mode]
+    self.logger.info(f"Feature mode: {self.feature_mode} ({self.feature_size} features)")
+    
     # Check if file exists
     checkpoint_exists = os.path.isfile("my-saved-model.pt")
 
     if self.train and self.model_start_mode == "fresh":
         # Initialize fresh model
         self.logger.info("Setting up model from scratch.")
-        self.model = Linear_QModel(input_size=FEATURE_SIZE, output_size=len(ACTIONS))
+        self.model = Linear_QModel(input_size=self.feature_size, output_size=len(ACTIONS))
         self.epsilon = EPSILON_START
     else:
         if not checkpoint_exists:
@@ -53,13 +61,16 @@ def setup(self):
             self.model = checkpoint
             self.epsilon = EPSILON_START
 
+        if self.model.input_size != self.feature_size:
+            raise ValueError(f"Checkpoint expects {self.model.input_size} features, but FEATURE_MODE='{self.feature_mode}' uses {self.feature_size}.")
+
 
 def act(self, game_state: dict) -> str:
     """
     Agent should parse the input, think, and take a decision.
     """
 
-    features = state_to_features(game_state)
+    features = state_to_features(game_state, self.feature_mode)
 
     # Exploration during training
     if self.train and random.random() < self.epsilon:
@@ -78,7 +89,7 @@ def act(self, game_state: dict) -> str:
     return action
 
 
-def state_to_features(game_state: dict) -> np.ndarray:
+def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
     """
     Converts the game state to the input of model, i.e. a feature vector.
 
@@ -93,6 +104,9 @@ def state_to_features(game_state: dict) -> np.ndarray:
     if game_state is None:
         return None
 
+    if feature_mode not in FEATURE_SIZES:
+        raise ValueError("feature_mode must be either 'f0' or 'f1'.")
+
     # Get the current location of the agent
     field = game_state["field"] # np.ndarray
     # bombs = game_state["bombs"] # (x, y), timer
@@ -104,7 +118,10 @@ def state_to_features(game_state: dict) -> np.ndarray:
     field_x, field_y = field.shape
 
     # Create a feature vector
-    features = np.zeros(11) # [1, free_U, free_D, free_L, free_R, coin_dx, coin_dy, path_U, path_D, path_L, path_R]
+    # F0: [1, free_U, free_D, free_L, free_R, coin_dx, coin_dy]
+    # F1: F0 + [path_U, path_D, path_L, path_R]
+    feature_size = FEATURE_SIZES[feature_mode]
+    features = np.zeros(feature_size)
 
     # Set bias as 1
     features[0] = 1
@@ -126,6 +143,7 @@ def state_to_features(game_state: dict) -> np.ndarray:
 
     # Calculate the distance (dx, dy) between the agent and the coin, and normalize dx, dy
     closest_distance = field_x + field_y
+    closest_coin = None
 
     if len(coins) == 0:
         features[5] = 0
@@ -145,7 +163,7 @@ def state_to_features(game_state: dict) -> np.ndarray:
                 closest_distance = manhattan_distance
                 closest_coin = coin
 
-        if closest_coin is not None:
+        if closest_coin is not None and feature_mode == 'f1':
             path_directions = shortest_path_directions(field, agent[3], closest_coin)
             features[7:11] = path_directions
 
