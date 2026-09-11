@@ -10,7 +10,7 @@ import events as game_events
 
 from . import callbacks, train
 from .callbacks import state_to_features
-from .model import Linear_QNet
+from .model import Linear_QModel
 
 
 @contextmanager
@@ -62,8 +62,8 @@ class LinearQAgentTest(unittest.TestCase):
             1 / 6,  # nearest coin dy: (4 - 3) / (7 - 1)
         ])
 
-        np.testing.assert_allclose(features, expected)
-        assert features.shape == (7,)
+        np.testing.assert_allclose(features[:7], expected)
+        assert features.shape == (11,)
         assert np.isfinite(features).all()
 
         print("state_to_features works correctly")
@@ -73,7 +73,7 @@ class LinearQAgentTest(unittest.TestCase):
         state_without_coins = dict(game_state)
         state_without_coins["coins"] = []
         assert np.array_equal(
-            state_to_features(state_without_coins),
+            state_to_features(state_without_coins)[:7],
             np.array([1, 1, 1, 0, 1, 0, 0])
         )
 
@@ -109,7 +109,7 @@ class LinearQAgentTest(unittest.TestCase):
         features = state_to_features(state)
 
         expected = [2/6, 0]
-        np.testing.assert_allclose(features[5:], expected)
+        np.testing.assert_allclose(features[5:7], expected)
 
 
     def test_features_nearest_coin_select(self):
@@ -121,7 +121,7 @@ class LinearQAgentTest(unittest.TestCase):
         features = state_to_features(state)
 
         expected = [-1/6, -1/6]
-        np.testing.assert_allclose(features[5:], expected)
+        np.testing.assert_allclose(features[5:7], expected)
 
 
     def test_features_no_coin(self):
@@ -133,7 +133,7 @@ class LinearQAgentTest(unittest.TestCase):
         features = state_to_features(state)
 
         expected = [0, 0]
-        np.testing.assert_allclose(features[5:], expected)
+        np.testing.assert_allclose(features[5:7], expected)
         
 
     def test_features_agent_in_corner(self):
@@ -149,7 +149,7 @@ class LinearQAgentTest(unittest.TestCase):
         
 
     def test_predict_returns_one_value_per_action(self):
-        model = Linear_QNet(input_size=7, output_size=6, seed=1)
+        model = Linear_QModel(input_size=7, output_size=6, seed=1)
         features = np.ones(7)
 
         q_values = model.predict(features)
@@ -159,7 +159,7 @@ class LinearQAgentTest(unittest.TestCase):
 
 
     def test_terminal_update_changes_only_selected_action(self):
-        model = Linear_QNet(
+        model = Linear_QModel(
             input_size=3,
             output_size=2,
             learning_rate=0.1,
@@ -185,7 +185,7 @@ class LinearQAgentTest(unittest.TestCase):
 
 
     def test_non_terminal_update_uses_next_state_value(self):
-        model = Linear_QNet(
+        model = Linear_QModel(
             input_size=2,
             output_size=2,
             learning_rate=0.1,
@@ -420,3 +420,80 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertEqual(reward_sparse, 0)
         self.assertEqual(reward_basic, 0)
         self.assertEqual(reward_shaped, 0)
+
+
+    def test_shortest_path_direction_right(self):
+        """Path Test A: Test that a target directly to the right returns RIGHT as the valid first step."""
+        state = self._game_state()
+        state["coins"] = [(4, 3)]
+
+        features = state_to_features(state)
+        
+        expected = [0, 0, 0, 1]
+
+        np.testing.assert_array_equal(features[7:11], expected)
+
+
+    def test_shortest_path_avoids_obstacle(self):
+        """Path Test B: Test that the shortest path direction accounts for obstacles in the field."""
+        state = self._game_state()
+        state["coins"] = [(5, 3)]
+
+        state["field"][3, 2] = 1
+        state["field"][4, 3] = 1
+        state["field"][4, 4] = 1
+
+        features = state_to_features(state)
+
+        expected = [0, 1, 0, 0]
+
+        np.testing.assert_array_equal(features[7:11], expected)
+
+
+    def test_shortest_path_multiple_first_steps(self):
+        """Path Test C: Test that all valid first steps are returned when multiple shortest paths exist."""
+        state = self._game_state()
+        state["coins"] = [(4, 4)]
+
+        features = state_to_features(state)
+
+        expected = [0, 1, 0, 1]
+
+        np.testing.assert_array_equal(features[7:11], expected)
+
+
+    def test_shortest_path_unreachable_target(self):
+        """Path Test D: Test that an unreachable target returns no valid path directions."""
+        state = self._game_state()
+        state["coins"] = [(3, 3)]
+
+        state["field"] = np.array([
+            [1, 1, 1, 1, 1, 1, 1],
+            [1, 0, 0, 0, 0, 0, 1],
+            [1, 0, 1, 1, 1, 0, 1],
+            [1, 0, 1, 0, 1, 0, 1],
+            [1, 0, 1, 1, 1, 0, 1],
+            [1, 0, 0, 0, 0, 0, 1],
+            [1, 1, 1, 1, 1, 1, 1]
+        ])
+
+        state["self"] = ("player", 0, 1, (1, 1))
+
+        features = state_to_features(state)
+
+        expected = [0, 0, 0, 0]
+
+        np.testing.assert_array_equal(features[7:11], expected)
+
+
+
+    def test_shortest_path_start_equals_target(self):
+        """Path Test E: Test that no direction is returned when start and target are identical."""
+        state = self._game_state()
+        state["coins"] = [(3, 3)]
+
+        features = state_to_features(state)
+
+        expected = [0, 0, 0, 0]
+
+        np.testing.assert_array_equal(features[7:11], expected)

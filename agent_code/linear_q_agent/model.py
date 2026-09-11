@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 
-class Linear_QNet:
+class Linear_QModel:
     """Represent Q(s, a) as one linear weight vector per action (one Q-value per action)"""
 
     def __init__(
