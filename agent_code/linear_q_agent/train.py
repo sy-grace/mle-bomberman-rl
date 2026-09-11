@@ -113,7 +113,8 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     new_distance = abs(new_dx) + abs(new_dy)
 
     # Movement toward / away from coin
-    if old_distance > 0:
+    # Skip distance shaping when a coin was collected, because the nearest target coin may have changed.
+    if old_distance > 0 and e.COIN_COLLECTED not in events:
 
         if new_distance < old_distance:
             events.append(MOVED_TOWARDS_COIN)
