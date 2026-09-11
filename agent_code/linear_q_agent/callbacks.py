@@ -9,7 +9,6 @@ from .model import Linear_QModel
 
 ACTIONS = ['UP', 'RIGHT', 'DOWN', 'LEFT', 'WAIT']
 EPSILON_START = 1.0
-MODEL_START_MODE = "resume"  # Set to "fresh" to ignore an existing checkpoint.
 FEATURE_SIZE = 11
 
 
@@ -24,14 +23,24 @@ def setup(self):
 
     :param self: This object is passed to all callbacks and you can set arbitrary values.
     """
-    if MODEL_START_MODE not in {"resume", "fresh"}:
+    self.model_start_mode = os.getenv("MODEL_START_MODE", "resume")
+
+    # Check if the model_start_mode is either "resume" or "fresh"
+    if self.model_start_mode not in {"resume", "fresh"}:
         raise ValueError("MODEL_START_MODE must be either 'resume' or 'fresh'.")
 
-    if MODEL_START_MODE == "fresh" or not os.path.isfile("my-saved-model.pt"):
+    # Check if file exists
+    checkpoint_exists = os.path.isfile("my-saved-model.pt")
+
+    if self.train and self.model_start_mode == "fresh":
+        # Initialize fresh model
         self.logger.info("Setting up model from scratch.")
         self.model = Linear_QModel(input_size=FEATURE_SIZE, output_size=len(ACTIONS))
         self.epsilon = EPSILON_START
     else:
+        if not checkpoint_exists:
+            raise FileNotFoundError("'my-saved-model.pt' does not exist.")
+
         self.logger.info("Loading model from saved state.")
         with open("my-saved-model.pt", "rb") as file:
             checkpoint = pickle.load(file)
@@ -43,6 +52,7 @@ def setup(self):
             # Support model-only files created before epsilon was persisted.
             self.model = checkpoint
             self.epsilon = EPSILON_START
+
 
 def act(self, game_state: dict) -> str:
     """
