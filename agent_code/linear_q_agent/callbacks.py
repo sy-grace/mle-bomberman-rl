@@ -28,7 +28,7 @@ def setup(self):
     # Check if the model_start_mode is either "resume" or "fresh"
     if self.model_start_mode not in {"resume", "fresh"}:
         raise ValueError("MODEL_START_MODE must be either 'resume' or 'fresh'.")
-    
+
     self.feature_mode = os.getenv("FEATURE_MODE", "f1")
 
     if self.feature_mode not in FEATURE_SIZES:
@@ -36,7 +36,7 @@ def setup(self):
 
     self.feature_size = FEATURE_SIZES[self.feature_mode]
     self.logger.info(f"Feature mode: {self.feature_mode} ({self.feature_size} features)")
-    
+
     # Check if file exists
     checkpoint_exists = os.path.isfile("my-saved-model.pt")
 

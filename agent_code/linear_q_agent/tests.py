@@ -596,7 +596,7 @@ class LinearQAgentTest(unittest.TestCase):
 
 
     def test_f1_feature_vector_has_eleven_features(self):
-        """Feature Mode Test E: Test that F1 returns a 11-dimensional feature vector."""
+        """Feature Mode Test E: Test that F1 returns an 11-dimensional feature vector."""
         state = self._game_state()
         features = state_to_features(state, "f1")
         self.assertEqual(features.shape, (11,))
@@ -610,3 +610,19 @@ class LinearQAgentTest(unittest.TestCase):
         f1 = state_to_features(state, "f1")
 
         np.testing.assert_allclose(f0, f1[:7])
+
+
+    def test_checkpoint_feature_size_mismatch_raises(self):
+        """Feature Mode Test G: Test that a checkpoint with a mismatched feature size raises a ValueError."""
+        with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
+            # F1 checkpoint: 11 inputs
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+
+            with open("my-saved-model.pt", "wb") as file:
+                pickle.dump({"model": model, "epsilon": 0.25}, file)
+
+            agent = SimpleNamespace(train=True, logger=Mock())
+
+            with patch.dict(os.environ, {"MODEL_START_MODE": "resume", "FEATURE_MODE": "f0"}, clear=True):
+                with self.assertRaises(ValueError):
+                    callbacks.setup(agent)
