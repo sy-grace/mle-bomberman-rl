@@ -11,7 +11,7 @@ import events as game_events
 
 from . import callbacks, train
 from .callbacks import state_to_features
-from .model import Linear_QModel
+from .model import Linear_SARSAModel
 
 
 @contextmanager
@@ -109,7 +109,7 @@ class LinearQAgentTest(unittest.TestCase):
         
 
     def test_predict_returns_one_value_per_action(self):
-        model = Linear_QModel(input_size=7, output_size=len(callbacks.ACTIONS), seed=1)
+        model = Linear_SARSAModel(input_size=7, output_size=len(callbacks.ACTIONS), seed=1)
         features = np.ones(7)
 
         q_values = model.predict(features)
@@ -119,7 +119,7 @@ class LinearQAgentTest(unittest.TestCase):
 
 
     def test_terminal_update_changes_only_selected_action(self):
-        model = Linear_QModel(
+        model = Linear_SARSAModel(
             input_size=3,
             output_size=2,
             learning_rate=0.1,
@@ -145,28 +145,32 @@ class LinearQAgentTest(unittest.TestCase):
 
 
     def test_non_terminal_update_uses_next_state_value(self):
-        model = Linear_QModel(
+        model = Linear_SARSAModel(
             input_size=2,
             output_size=2,
-            learning_rate=0.1,
-            gamma=0.5,
+            learning_rate=0.5,
+            gamma=0.9,
+            lambda_=0.0,
             seed=1,
         )
         model.weights[:] = 0.0
-        model.weights[:, 1] = [1.0, 0.0]
-        state = np.array([1.0, 2.0])
-        next_state = np.array([3.0, 0.0])
+
+        model.weights[:, 0] = [1.0, 0.0]
+        model.weights[:, 1] = [0.0, 2.0]
+
+        state = np.array([1.0, 0.0])
+        next_state = np.array([0.0, 1.0])
 
         td_error = model.update(
             state=state,
             action=0,
-            reward=1.0,
+            reward=0.0,
             next_state=next_state,
+            next_action=0,
         )
 
-        # max(Q(next_state)) is 3, so target is 1 + 0.5 * 3 = 2.5.
-        self.assertAlmostEqual(td_error, 2.5)
-        np.testing.assert_allclose(model.weights[:, 0], [0.25, 0.5])
+        # 0 - 1 = 1, when sarsa target is 0 + 0.9(0) = 0
+        self.assertAlmostEqual(td_error, -1.0)
 
 
     def test_act_explores_when_random_value_is_below_epsilon(self):
@@ -450,7 +454,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_model_start_mode_defaults_to_resume(self):
         """Model Start Test A: Test that the default model start mode is 'resume'."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_SARSAModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -488,7 +492,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_fresh_training_ignores_existing_checkpoint(self):
         """Model Start Test D: Test that fresh training ignores an existing checkpoint and initializes a new model."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_SARSAModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -506,7 +510,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_resume_training_loads_existing_checkpoint(self):
         """Model Start Test E: Test that resume training loads an existing checkpoint when available."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_SARSAModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -524,7 +528,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_evaluation_loads_checkpoint_independent_of_start_mode(self):
         """Model Start Test F: Test that evaluation loads the checkpoint regardless of the training start mode."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_SARSAModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -552,7 +556,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_feature_mode_defaults_to_f1(self):
         """Feature Mode Test A: Test that the default feature mode is F1 with 11 features."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_SARSAModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
 
             with open("my-saved-model.pt", "wb") as file:
                 pickle.dump({"model": model, "epsilon": 0.25}, file)
@@ -617,7 +621,7 @@ class LinearQAgentTest(unittest.TestCase):
         """Feature Mode Test G: Test that a checkpoint with a mismatched feature size raises a ValueError."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
             # F1 checkpoint: 11 inputs
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_SARSAModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
 
             with open("my-saved-model.pt", "wb") as file:
                 pickle.dump({"model": model, "epsilon": 0.25}, file)
@@ -659,3 +663,66 @@ class LinearQAgentTest(unittest.TestCase):
                 callbacks.setup(agent_b)
 
             self.assertFalse(np.allclose(agent_a.model.weights, agent_b.model.weights))
+
+
+    def test_eligibility_trace_propagates_updates_previous_action_weights(self):
+        """Verify that eligibility traces propagate later TD errors to earlier actions."""
+        model = Linear_SARSAModel(
+            input_size=2,
+            output_size=2,
+            learning_rate=1.0,
+            gamma=0.5,
+            lambda_=0.5,
+            seed=1,
+        )
+        model.weights[:] = 0.0
+
+        first_state = np.array([1.0, 0.0])
+        second_state = np.array([0.0, 1.0])
+
+        # First transition: Q(s, a) = 0; target = 1 + gamme * 0 = 1; TD error = 1
+        model.update(state=first_state, action=0, reward=1.0, next_state=second_state, next_action=1)
+        first_action_weight_after_first_update = model.weights[0, 0]
+
+        # Second transition is terminal. The eligibility trace from the first transition should still cause the old action-0 weight to be updated again.
+        model.update(state=second_state, action=1, reward=1.0, next_state=None, next_action=None)
+
+        self.assertAlmostEqual(first_action_weight_after_first_update, 1.0)
+        self.assertAlmostEqual(model.weights[0, 0], 1.25)
+
+
+    def test_reset_traces_clears_all_eligibility_traces(self):
+        """Verify that reset_traces() sets all eligibilitly traces to zero."""
+        model = Linear_SARSAModel(
+            input_size=2,
+            output_size=2,
+            seed=1,
+        )
+
+        model.eligibility_traces[:] = 1.0
+        model.reset_traces()
+
+        np.testing.assert_array_equal(model.eligibility_traces, np.zeros_like(model.eligibility_traces))
+
+
+    def test_sarsa_update_uses_selected_next_action(self):
+        """Verify that SARSA bootstraps from the selected next action instead of max Q."""
+        model = Linear_SARSAModel(
+            input_size=2,
+            output_size=2,
+            learning_rate=0.5,
+            gamma=0.9,
+            lambda_=0.0,
+            seed=1,
+        )
+
+        model.weights[:] = 0.0
+        model.weights[:, 0] = np.array([1.0, 0.0])
+        model.weights[:, 1] = np.array([0.0, 2.0])
+
+        state = np.array([1.0, 0.0])
+        next_state = np.array([0.0, 1.0])
+
+        td_error = model.update(state=state, action=0, reward=0.0, next_state=next_state, next_action=0)
+
+        self.assertAlmostEqual(td_error, -1.0)

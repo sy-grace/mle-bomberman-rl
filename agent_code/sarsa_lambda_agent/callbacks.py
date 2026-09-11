@@ -4,7 +4,7 @@ import random
 import numpy as np
 from collections import deque
 
-from .model import Linear_QModel
+from .model import Linear_SARSAModel
 
 
 ACTIONS = ['UP', 'RIGHT', 'DOWN', 'LEFT', 'WAIT']
@@ -50,7 +50,7 @@ def setup(self):
     if self.train and self.model_start_mode == "fresh":
         # Initialize fresh model
         self.logger.info("Setting up model from scratch.")
-        self.model = Linear_QModel(input_size=self.feature_size, output_size=len(ACTIONS), seed=self.experiment_seed)
+        self.model = Linear_SARSAModel(input_size=self.feature_size, output_size=len(ACTIONS), seed=self.experiment_seed)
         self.epsilon = EPSILON_START
     else:
         if not checkpoint_exists:
