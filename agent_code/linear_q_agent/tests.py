@@ -121,7 +121,7 @@ class LinearQAgentTest(unittest.TestCase):
         """Feature Test H: Verify that F1 uses the five Task 1 actions without BOMB."""
         actions = callbacks.actions_for_feature_mode("f1")
 
-        expected = ["UP", "RIGHT", "DOWN", "LEFT", "WAIT"]
+        expected = ["UP", "DOWN", "LEFT", "RIGHT", "WAIT"]
         self.assertEqual(actions, expected)
 
 
@@ -129,7 +129,7 @@ class LinearQAgentTest(unittest.TestCase):
         """Feature Test I: Verify that F2 uses the six Task 2 actions including BOMB."""
         actions = callbacks.actions_for_feature_mode("f2")
 
-        expected = ["UP", "RIGHT", "DOWN", "LEFT", "WAIT", "BOMB"]
+        expected = ["UP", "DOWN", "LEFT", "RIGHT", "WAIT", "BOMB"]
         self.assertEqual(actions, expected)
 
 
@@ -145,6 +145,74 @@ class LinearQAgentTest(unittest.TestCase):
 
         self.assertEqual(agent.model.input_size, 25)
         self.assertEqual(agent.model.output_size, 6)
+
+
+    def test_f2_marks_available_bomb(self):
+        """Feature Test K: Verify that F2 marks an available bomb."""
+        state = self._game_state()
+
+        name, score, _, position = state["self"]
+        state["self"] = (name, score, True, position)
+
+        features = state_to_features(state, "f2")
+
+        expected = 1.0
+        np.testing.assert_array_equal(features[11], expected)
+
+
+    def test_f2_detects_adjacent_crate(self):
+        """Feature Test L: Verify that F2 detects a crate next to the agent."""
+        state = self._game_state()
+
+        x, y = 3, 3
+        name, score, bombs_left, _ = state["self"]
+        state["self"] = (name, score, bombs_left, (x, y))
+
+        field = state["field"].copy()
+        field[x, y] = 0
+        field[x, y - 1] = 1 # crate above agent
+        state["field"] = field
+
+        features = state_to_features(state, "f2")
+
+        expected = np.array([1.0, 0.0, 0.0, 0.0])
+        np.testing.assert_array_equal(features[12:16], expected)
+        
+
+    def test_f2_points_toward_nearest_crate_placement_tile(self):
+        """Feature Test M: Verify that F2 points toward a reachable bomb-placement tile near a crate."""
+        state = self._game_state()
+
+        name, score, bombs_left, _ = state["self"]
+        state["self"] = (name, score, bombs_left, (2, 3))
+
+        field = state["field"].copy()
+
+        # Remove existing crates from the test area if necessary.
+        field[field == 1] = 0
+
+        field[2, 3] = 0
+        field[5, 3] = 1
+        state["field"] = field
+
+        features = state_to_features(state, "f2")
+
+        expected = np.array([0.0, 0.0, 0.0, 1.0])
+        np.testing.assert_array_equal(features[16:20], expected)
+
+
+    def test_f2_crate_path_is_zero_when_no_crates_exists(self):
+        """Feature Test N: Verify that crate-path features remain zero when no crates exist."""
+        state = self._game_state()
+
+        field = state["field"].copy()
+        field[field == 1] = 0
+        state["field"] = field
+
+        features = state_to_features(state, "f2")
+
+        expected = np.zeros(4)
+        np.testing.assert_array_equal(features[16:20], expected)
 
 
     def test_predict_returns_one_value_per_action(self):
@@ -238,7 +306,7 @@ class LinearQAgentTest(unittest.TestCase):
             actions=callbacks.actions_for_feature_mode("f1"),
             rng=Mock()
         )
-        agent.model.predict.return_value = np.array([1.0, 4.0, 2.0, 0.0, 3.0])
+        agent.model.predict.return_value = np.array([1.0, 2.0, 0.0, 4.0, 3.0])
 
         agent.rng.random.return_value = 0.9
         action = callbacks.act(agent, self._game_state())

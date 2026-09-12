@@ -6,8 +6,14 @@ from collections import deque
 
 from .model import Linear_QModel
 
+DIRECTIONS = [
+    (0, -1),    # UP
+    (0, 1),     # DOWN
+    (-1, 0),    # LEFT
+    (1, 0)      # RIGHT
+]
 
-TASK1_ACTIONS = ['UP', 'RIGHT', 'DOWN', 'LEFT', 'WAIT']
+TASK1_ACTIONS = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'WAIT']
 TASK2_ACTIONS = TASK1_ACTIONS + ["BOMB"]
 
 EPSILON_START = 1.0
@@ -41,7 +47,7 @@ def setup(self):
     self.feature_mode = os.getenv("FEATURE_MODE", "f1")
 
     if self.feature_mode not in FEATURE_SIZES:
-        raise ValueError("FEATURE_MODE must be either 'f0' or 'f1'.")
+        raise ValueError("FEATURE_MODE must be one of 'f0', 'f1', or 'f2'.")
 
     self.feature_size = FEATURE_SIZES[self.feature_mode]
     self.logger.info(f"Feature mode: {self.feature_mode} ({self.feature_size} features)")
@@ -104,7 +110,7 @@ def act(self, game_state: dict) -> str:
 
 def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
     """
-    Converts the game state to the input of model, i.e. a feature vector.
+    Converts the game state to a feature vector.
 
     You can find out about the state of the game environment via game_state,
     which is a dictionary. Consult 'get_state_for_agent' in environment.py to see
@@ -133,6 +139,11 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
     # Create a feature vector
     # F0: [1, free_U, free_D, free_L, free_R, coin_dx, coin_dy]
     # F1: F0 + [path_U, path_D, path_L, path_R]
+    # F2: F1 + [bomb_available, 
+    #           adjacent_crate_U, adjacent_crate_D, adjacent_crate_L, adjacent_crate_R, 
+    #           crate_path_U, crate_path_D, crate_path_L, crate_path_R, 
+    #           in_bomb_danger, 
+    #           escape_U, escape_D, escape_L, escape_R]
     feature_size = FEATURE_SIZES[feature_mode]
     features = np.zeros(feature_size)
 
@@ -180,35 +191,77 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
             path_directions = shortest_path_directions(field, agent[3], closest_coin)
             features[7:11] = path_directions
 
+    if feature_mode == "f2":
+        # 11: bomb available
+        features[11] = float(agent[2] > 0)
+
+        # 12:16: adjacent crates [UP, DOWN, LEFT, RIGHT]
+        for i, (dx, dy) in enumerate(DIRECTIONS):
+            nx = agent_x + dx
+            ny = agent_y + dy
+
+            if field[nx, ny] == 1:
+                features[12 + i] = 1.0
+
+        # 16:20: path to crates [UP, DOWN, LEFT, RIGHT]
+        crate_targets = crate_placement_targets(field)
+
+        features[16:20] = shortest_path_directions_to_any(field, agent[3], crate_targets)
+
     # Return the final feature vector
     return features
 
 
 def shortest_path_directions(field, start, target):
     """Return valid first-step directions along shortest paths from start to target."""
+    return shortest_path_directions_to_any(field, start, {target})
 
-    directions = [
-        (0, -1),    # UP
-        (0, 1),     # DOWN
-        (-1, 0),    # LEFT
-        (1, 0)      # RIGHT
-    ]
+
+def actions_for_feature_mode(feature_mode):
+    if feature_mode == "f2":
+        return TASK2_ACTIONS
+    return TASK1_ACTIONS
+
+
+def crate_placement_targets(field):
+    targets = set()
+
+    crate_positions = np.argwhere(field == 1)
+
+    for crate_x, crate_y in crate_positions:
+        for dx, dy in DIRECTIONS:
+            nx = crate_x + dx
+            ny = crate_y + dy
+
+            if 0 <= nx < field.shape[0] and 0 <= ny < field.shape[1] and field[nx, ny] == 0:
+                targets.add((nx, ny))
+
+    return targets
+
+
+def shortest_path_directions_to_any(field, start, targets):
+    """"""
 
     # No movement needed if already at target
-    if start == target:
+    if not targets:
+        return np.zeros(4)
+
+    if start in targets:
         return np.zeros(4)
 
     # Distance from each tile to the target
     distances = np.full(field.shape, -1)
+    queue = deque()
 
-    queue = deque([target])
-    distances[target] = 0
+    for target in targets:
+        distances[target] = 0
+        queue.append(target)
 
     # BFS starting from the target
     while queue:
         x, y = queue.popleft()
 
-        for dx, dy in directions:
+        for dx, dy in DIRECTIONS:
             nx, ny = x + dx, y + dy
 
             # Check field boundaries
@@ -234,7 +287,7 @@ def shortest_path_directions(field, start, target):
     path_directions = np.zeros(4)
 
     # Check which neighboring tiles reduce the shortest-path distance by 1
-    for i, (dx, dy) in enumerate(directions):
+    for i, (dx, dy) in enumerate(DIRECTIONS):
         nx = start[0] + dx
         ny = start[1] + dy
 
@@ -242,12 +295,6 @@ def shortest_path_directions(field, start, target):
             continue
 
         if distances[nx, ny] == current_distance - 1:
-            path_directions[i] = 1
+            path_directions[i] = 1.0
 
     return path_directions
-
-
-def actions_for_feature_mode(feature_mode):
-    if feature_mode == "f2":
-        return TASK2_ACTIONS
-    return TASK1_ACTIONS

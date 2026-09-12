@@ -47,9 +47,9 @@ REWARD_CONFIGS = {
 
 ACTION_TO_INDEX = {
     "UP": 0,
-    "RIGHT": 1,
-    "DOWN": 2,
-    "LEFT": 3,
+    "DOWN": 1,
+    "LEFT": 2,
+    "RIGHT": 3,
     "WAIT": 4,
     "BOMB": 5,
 }
