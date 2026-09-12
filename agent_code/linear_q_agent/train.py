@@ -23,9 +23,12 @@ EPSILON_DECAY = 0.995
 MOVED_TOWARDS_COIN = "MOVED_TOWARDS_COIN"
 MOVED_AWAY_FROM_COIN = "MOVED_AWAY_FROM_COIN"
 UNNECESSARILY_WAITED = "UNNECESSARILY_WAITED"
+OSCILLATION = "OSCILLATION"
+
 ESCAPED_BOMB_DANGER = "ESCAPED_BOMB_DANGER"
 STAYED_IN_BOMB_DANGER = "STAYED_IN_BOMB_DANGER"
-OSCILLATION = "OSCILLATION"
+MOVED_TOWARDS_CRATE = "MOVED_TOWARDS_CRATE"
+MOVED_AWAY_FROM_CRATE = "MOVED_AWAY_FROM_CRATE"
 
 SPARSE_REWARDS = {
     e.COIN_COLLECTED: +10
@@ -45,6 +48,8 @@ SHAPING_EXTRA_REWARDS = {
     ESCAPED_BOMB_DANGER: +3,
     STAYED_IN_BOMB_DANGER: -2,
 
+    MOVED_TOWARDS_CRATE: +1,
+    MOVED_AWAY_FROM_CRATE: -1,
 }
 
 REWARD_CONFIGS = {
@@ -120,6 +125,35 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
 
         if old_in_danger and not new_in_danger:
             events.append(ESCAPED_BOMB_DANGER)
+
+    # Custom event: move along crate path
+    if self.feature_mode == "f2":
+        old_in_danger = state[20] == 1.0
+        crate_path = state[16:20]
+
+        # Only search for crates when there is no visible coin and escaping a bomb is not currently more important.
+        if not old_in_danger and not old_game_state["coins"] and crate_path.any():
+            old_x, old_y = old_game_state["self"][3]
+            new_x, new_y = new_game_state["self"][3]
+
+            dx = new_x - old_x
+            dy = new_y - old_y
+
+            direction_to_index = {
+                (0, -1): 0, # UP
+                (0, 1): 1,  # DOWN
+                (-1, 0): 2, # LEFT
+                (1, 0): 3   # RIGHT
+            }
+
+            moved_index = direction_to_index.get((dx, dy))
+
+            # Only shape successful movement, not WAIT/BOMB/invalid movement.
+            if moved_index is not None:
+                if crate_path[moved_index] == 1.0:
+                    events.append(MOVED_TOWARDS_CRATE)
+                else:
+                    events.append(MOVED_AWAY_FROM_CRATE)
 
     # Custom events based on coin proximity and movement
     # Coin distance

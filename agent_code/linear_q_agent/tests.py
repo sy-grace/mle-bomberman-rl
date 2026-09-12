@@ -27,7 +27,7 @@ def temporary_working_directory(directory):
 class LinearQAgentTest(unittest.TestCase):
     @staticmethod
     def _game_state():
-        field = np.ones((7, 7), dtype=int)
+        field = np.full((7, 7), -1, dtype=int)
         field[1:-1, 1:-1] = 0
         return {
             "field": field,
@@ -657,6 +657,68 @@ class LinearQAgentTest(unittest.TestCase):
         reward = train.reward_from_events(agent, events)
         
         self.assertAlmostEqual(reward, 3)
+
+
+    def test_f2_adds_towards_crate_event_for_recommended_move(self):
+        """Reward Test N: Verify that following the crate path creates a positive shaping event."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f2",
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        # Agent at (2, 3), crate at (5, 3): nearest bomb-placement tile is (4, 3), so RIGHT is recommended.
+        old_state["field"][5, 3] = 1
+        new_state["field"][5, 3] = 1
+
+        old_state["self"] = ("player", 0, True, (2, 3))
+        new_state["self"] = ("player", 0, True, (3, 3))
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+            
+        self.assertIn(train.MOVED_TOWARDS_CRATE, events)
+
+
+    def test_f2_adds_away_from_crate_event_for_wrong_move(self):
+        """Reward Test O: Verify that moving away from the crate path creates a penalty event."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f2",
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        # Agent at (2, 3), crate at (5, 3): nearest bomb-placement tile is (4, 3), so LEFT causes penalty.
+        old_state["field"][5, 3] = 1
+        new_state["field"][5, 3] = 1
+
+        old_state["self"] = ("player", 0, True, (2, 3))
+        new_state["self"] = ("player", 0, True, (1, 3))
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "LEFT", new_state, events)
+            
+        self.assertIn(train.MOVED_AWAY_FROM_CRATE, events)
 
 
     def test_shortest_path_direction_right(self):
