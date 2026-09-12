@@ -119,15 +119,15 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     next_state = state_to_features(new_game_state, self.feature_mode)
 
     # Bomb danger status
-    old_in_danger = self.feature_mode == "f2" and state[20] == 1.0
-    new_in_danger = self.feature_mode == "f2" and next_state[20]  == 1.0
+    old_in_danger = self.feature_mode in {"f2", "f3"} and state[20] == 1.0
+    new_in_danger = self.feature_mode in {"f2", "f3"} and next_state[20]  == 1.0
 
     # Custom event: escaped bomb danger
     if old_in_danger and not new_in_danger:
         events.append(ESCAPED_BOMB_DANGER)
 
     # Custom event: move along crate path
-    if self.feature_mode == "f2":
+    if self.feature_mode in {"f2", "f3"}:
         crate_path = state[16:20]
 
         # Only search for crates when there is no visible coin and escaping a bomb is not currently more important.
