@@ -585,6 +585,80 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertAlmostEqual(reward, -20)
 
 
+    def test_f2_adds_escape_event_when_leaving_bomb_danger(self):
+        """Reward Test K: Verify that leaving bomb danger creates an escape event."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f2",
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        # Agent starts inside the bomb's blast line.
+        old_state["self"] = ("player", 0, False, (3, 3))
+        old_state["bombs"] = [((3, 5), 3)]
+
+        # Agent moves RIGHT to a safe tile.
+        new_state["self"] = ("player", 0, False, (4, 3))
+        new_state["bombs"] = [((3, 5), 2)]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertIn(train.ESCAPED_BOMB_DANGER, events)
+
+
+    def test_f2_does_not_add_escape_event_when_remaining_safe(self):
+        """Reward Test L: Verify that safe-to-safe movement does not create an escape event."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f2",
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["bombs"] = []
+        new_state["bombs"] = []
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, True, (4, 3))
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+            
+        self.assertNotIn(train.ESCAPED_BOMB_DANGER, events)
+
+
+    def test_shaped_reward_rewards_escaping_bomb_danger(self):
+        """Reward Test M: Verify that shaped mode rewards escaping bomb danger."""
+        agent = SimpleNamespace(logger=Mock())
+
+        events = [train.ESCAPED_BOMB_DANGER] # +3
+
+        agent.reward_mode = "shaped"
+        reward = train.reward_from_events(agent, events)
+        
+        self.assertAlmostEqual(reward, 3)
+
+
     def test_shortest_path_direction_right(self):
         """Path Test A: Test that a target directly to the right returns RIGHT as the valid first step."""
         state = self._game_state()

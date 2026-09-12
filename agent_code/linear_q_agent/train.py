@@ -113,6 +113,14 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     state = state_to_features(old_game_state, self.feature_mode)
     next_state = state_to_features(new_game_state, self.feature_mode)
 
+    # Custom event: escaped bomb danger
+    if self.feature_mode == "f2":
+        old_in_danger = state[20] == 1.0
+        new_in_danger = next_state[20]  == 1.0
+
+        if old_in_danger and not new_in_danger:
+            events.append(ESCAPED_BOMB_DANGER)
+
     # Custom events based on coin proximity and movement
     # Coin distance
     old_dx, old_dy = state[5], state[6]
