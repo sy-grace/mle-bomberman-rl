@@ -715,3 +715,14 @@ class LinearSARSAAgentTest(unittest.TestCase):
 
         agent.rng.random.assert_not_called()
         agent.model.predict.assert_not_called()
+
+
+    def test_sarsa_lambda_from_environment(self):
+        with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
+            agent = SimpleNamespace(train=True, logger=Mock())
+
+            with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "SARSA_LAMBDA": "0.0"}, clear=True):
+                callbacks.setup(agent)
+
+            self.assertEqual(agent.sarsa_lambda, 0.0)
+            self.assertEqual(agent.model.lambda_, 0.0)

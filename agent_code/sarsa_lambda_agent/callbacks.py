@@ -49,8 +49,10 @@ def setup(self):
 
     if self.train and self.model_start_mode == "fresh":
         # Initialize fresh model
+        self.sarsa_lambda = float(os.getenv("SARSA_LAMBDA", "0.8"))
+        self.logger.info(f"SARSA lambda: {self.sarsa_lambda}")
         self.logger.info("Setting up model from scratch.")
-        self.model = Linear_SARSAModel(input_size=self.feature_size, output_size=len(ACTIONS), seed=self.experiment_seed)
+        self.model = Linear_SARSAModel(input_size=self.feature_size, output_size=len(ACTIONS), seed=self.experiment_seed, lambda_=self.sarsa_lambda)
         self.epsilon = EPSILON_START
     else:
         if not checkpoint_exists:
