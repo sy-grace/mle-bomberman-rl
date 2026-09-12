@@ -76,7 +76,7 @@ def setup_training(self):
     self.last_distance = None
 
     # Reward configuration
-    self.reward_mode = os.getenv("BOMBERMAN_REWARD_MODE", "basic").lower()
+    self.reward_mode = os.getenv("REWARD_MODE", "basic").lower()
 
     if self.reward_mode not in REWARD_CONFIGS:
         raise ValueError(f"Invalid reward mode: {self.reward_mode}.\n Choose from {list(REWARD_CONFIGS.keys())}.")
