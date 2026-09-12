@@ -39,7 +39,7 @@ class LinearQAgentTest(unittest.TestCase):
 
 
     def test_features_all_directions_free(self):
-        """Test A: All directions are free."""
+        """Feature Test A: All directions are free."""
         state = self._game_state()
         features = state_to_features(state, "f1")
 
@@ -49,7 +49,7 @@ class LinearQAgentTest(unittest.TestCase):
 
 
     def test_features_up_blocked(self):
-        """Test B: Up tile is blocked."""
+        """Feature Test B: Up tile is blocked."""
         state = self._game_state()
 
         # UP of agent (3, 3) is (3, 2)
@@ -61,7 +61,7 @@ class LinearQAgentTest(unittest.TestCase):
 
 
     def test_features_coin_to_the_right(self):
-        """Test C: When there is a coin on the right"""
+        """Feature Test C: When there is a coin on the right"""
         state = self._game_state()
 
         # There is a coin at (5, 3), and the agent is at (3, 3)
@@ -73,7 +73,7 @@ class LinearQAgentTest(unittest.TestCase):
 
 
     def test_features_nearest_coin_select(self):
-        """Test D: Check if the agent chooses the nearest coin among all coins."""
+        """Feature Test D: Check if the agent chooses the nearest coin among all coins."""
         state = self._game_state()
 
         # There are two coins: one at (5, 4), and the other at (2, 2)
@@ -85,7 +85,7 @@ class LinearQAgentTest(unittest.TestCase):
 
 
     def test_features_no_coin(self):
-        """Test E: No coin in the field."""
+        """Feature Test E: No coin in the field."""
         state = self._game_state()
 
         # There is no coin in the field
@@ -97,7 +97,7 @@ class LinearQAgentTest(unittest.TestCase):
         
 
     def test_features_agent_in_corner(self):
-        """Test F: Agent is at a walkable corner next to border walls."""
+        """Feature Test F: Agent is at a walkable corner next to border walls."""
         state = self._game_state()
 
         # The agent is in the corner
@@ -108,13 +108,52 @@ class LinearQAgentTest(unittest.TestCase):
         np.testing.assert_array_equal(features[:5], expected)
         
 
+    def test_f2_feature_vector_has_twenty_five_features(self):
+        """Feature Test G: Verify that F2 produces a 25-dimensional feature vector."""
+        state = self._game_state()
+        features = state_to_features(state, "f2")
+
+        expected = (25,)
+        self.assertEqual(features.shape, expected)
+
+
+    def test_f1_uses_task1_action_space(self):
+        """Feature Test H: Verify that F1 uses the five Task 1 actions without BOMB."""
+        actions = callbacks.actions_for_feature_mode("f1")
+
+        expected = ["UP", "RIGHT", "DOWN", "LEFT", "WAIT"]
+        self.assertEqual(actions, expected)
+
+
+    def test_f2_uses_task2_action_space_with_bomb(self):
+        """Feature Test I: Verify that F2 uses the six Task 2 actions including BOMB."""
+        actions = callbacks.actions_for_feature_mode("f2")
+
+        expected = ["UP", "RIGHT", "DOWN", "LEFT", "WAIT", "BOMB"]
+        self.assertEqual(actions, expected)
+
+
+    def test_f2_fresh_model_uses_twenty_five_inputs_and_six_outputs(self):
+        """Feature Test J: Verify that fresh F2 training creates a 25-input, 6-action model."""
+        agent = SimpleNamespace(
+            train=True,
+            logger=Mock()
+        )
+
+        with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "FEATURE_MODE": "f2"}, clear=True):
+            callbacks.setup(agent)
+
+        self.assertEqual(agent.model.input_size, 25)
+        self.assertEqual(agent.model.output_size, 6)
+
+
     def test_predict_returns_one_value_per_action(self):
-        model = Linear_QModel(input_size=7, output_size=len(callbacks.ACTIONS), seed=1)
+        model = Linear_QModel(input_size=7, output_size=len(callbacks.actions_for_feature_mode("f0")), seed=1)
         features = np.ones(7)
 
         q_values = model.predict(features)
 
-        self.assertEqual(q_values.shape, (len(callbacks.ACTIONS),))
+        self.assertEqual(q_values.shape, (len(callbacks.actions_for_feature_mode("f0")),))
         self.assertTrue(np.isfinite(q_values).all())
 
 
@@ -176,6 +215,7 @@ class LinearQAgentTest(unittest.TestCase):
             model=Mock(),
             logger=Mock(),
             feature_mode="f1",
+            actions=callbacks.actions_for_feature_mode("f1"),
             rng=Mock()
         )
 
@@ -184,7 +224,7 @@ class LinearQAgentTest(unittest.TestCase):
         action = callbacks.act(agent, self._game_state())
 
         self.assertEqual(action, "WAIT")
-        agent.rng.choice.assert_called_once_with(callbacks.ACTIONS)
+        agent.rng.choice.assert_called_once_with(callbacks.actions_for_feature_mode("f1"))
         agent.model.predict.assert_not_called()
 
 
@@ -195,6 +235,7 @@ class LinearQAgentTest(unittest.TestCase):
             model=Mock(),
             logger=Mock(),
             feature_mode="f1",
+            actions=callbacks.actions_for_feature_mode("f1"),
             rng=Mock()
         )
         agent.model.predict.return_value = np.array([1.0, 4.0, 2.0, 0.0, 3.0])
@@ -450,7 +491,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_model_start_mode_defaults_to_resume(self):
         """Model Start Test A: Test that the default model start mode is 'resume'."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.actions_for_feature_mode("f1")), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -488,7 +529,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_fresh_training_ignores_existing_checkpoint(self):
         """Model Start Test D: Test that fresh training ignores an existing checkpoint and initializes a new model."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.actions_for_feature_mode("f1")), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -506,7 +547,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_resume_training_loads_existing_checkpoint(self):
         """Model Start Test E: Test that resume training loads an existing checkpoint when available."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.actions_for_feature_mode("f1")), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -524,7 +565,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_evaluation_loads_checkpoint_independent_of_start_mode(self):
         """Model Start Test F: Test that evaluation loads the checkpoint regardless of the training start mode."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.actions_for_feature_mode("f1")), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -552,7 +593,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_feature_mode_defaults_to_f1(self):
         """Feature Mode Test A: Test that the default feature mode is F1 with 11 features."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.actions_for_feature_mode("f1")), seed=1)
 
             with open("my-saved-model.pt", "wb") as file:
                 pickle.dump({"model": model, "epsilon": 0.25}, file)
@@ -617,7 +658,7 @@ class LinearQAgentTest(unittest.TestCase):
         """Feature Mode Test G: Test that a checkpoint with a mismatched feature size raises a ValueError."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
             # F1 checkpoint: 11 inputs
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.actions_for_feature_mode("f1")), seed=1)
 
             with open("my-saved-model.pt", "wb") as file:
                 pickle.dump({"model": model, "epsilon": 0.25}, file)

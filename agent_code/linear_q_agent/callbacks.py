@@ -7,9 +7,11 @@ from collections import deque
 from .model import Linear_QModel
 
 
-ACTIONS = ['UP', 'RIGHT', 'DOWN', 'LEFT', 'WAIT']
+TASK1_ACTIONS = ['UP', 'RIGHT', 'DOWN', 'LEFT', 'WAIT']
+TASK2_ACTIONS = TASK1_ACTIONS + ["BOMB"]
+
 EPSILON_START = 1.0
-FEATURE_SIZES = {"f0": 7, "f1": 11}
+FEATURE_SIZES = {"f0": 7, "f1": 11, "f2": 25}
 
 
 def setup(self):
@@ -44,13 +46,15 @@ def setup(self):
     self.feature_size = FEATURE_SIZES[self.feature_mode]
     self.logger.info(f"Feature mode: {self.feature_mode} ({self.feature_size} features)")
 
+    self.actions = actions_for_feature_mode(self.feature_mode)
+
     # Check if file exists
     checkpoint_exists = os.path.isfile("my-saved-model.pt")
 
     if self.train and self.model_start_mode == "fresh":
         # Initialize fresh model
         self.logger.info("Setting up model from scratch.")
-        self.model = Linear_QModel(input_size=self.feature_size, output_size=len(ACTIONS), seed=self.experiment_seed)
+        self.model = Linear_QModel(input_size=self.feature_size, output_size=len(self.actions), seed=self.experiment_seed)
         self.epsilon = EPSILON_START
     else:
         if not checkpoint_exists:
@@ -71,6 +75,9 @@ def setup(self):
         if self.model.input_size != self.feature_size:
             raise ValueError(f"Checkpoint expects {self.model.input_size} features, but FEATURE_MODE='{self.feature_mode}' uses {self.feature_size}.")
 
+        if self.model.output_size != len(self.actions):
+            raise ValueError(f"Checkpoint expects {self.model.output_size} actions, but FEATURE_MODE='{self.feature_mode}' uses {len(self.actions)}.")
+
 
 def act(self, game_state: dict) -> str:
     """
@@ -81,14 +88,14 @@ def act(self, game_state: dict) -> str:
     # Exploration during training
     if self.train and self.rng.random() < self.epsilon:
         self.logger.debug("Choosing action purely at random.")
-        return self.rng.choice(ACTIONS)
+        return self.rng.choice(self.actions)
 
     # Exploitation
     q_values = self.model.predict(features)
 
     # Choose action with highest Q-value
     action_index = int(np.argmax(q_values))
-    action = ACTIONS[action_index]
+    action = self.actions[action_index]
 
     self.logger.debug("Choosing action with the highest Q-value.")
 
@@ -169,7 +176,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
                 closest_distance = manhattan_distance
                 closest_coin = coin
 
-        if closest_coin is not None and feature_mode == 'f1':
+        if closest_coin is not None and feature_mode in {"f1", "f2"}:
             path_directions = shortest_path_directions(field, agent[3], closest_coin)
             features[7:11] = path_directions
 
@@ -238,3 +245,9 @@ def shortest_path_directions(field, start, target):
             path_directions[i] = 1
 
     return path_directions
+
+
+def actions_for_feature_mode(feature_mode):
+    if feature_mode == "f2":
+        return TASK2_ACTIONS
+    return TASK1_ACTIONS
