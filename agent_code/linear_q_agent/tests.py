@@ -721,6 +721,77 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertIn(train.MOVED_AWAY_FROM_CRATE, events)
 
 
+    def test_f2_does_not_shape_crate_navigation_while_in_bomb_danger(self):
+        """Reward Test P: Bomb escape takes priority over crate navigation."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f2",
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        # Crate to the RIGHT -> crate path recommends RIGHT.
+        old_state["field"][5, 3] = 1
+        new_state["field"][5, 3] = 1
+
+        # Agent is inside bomb danger.
+        old_state["self"] = ("player", 0, False, (3, 3))
+        old_state["bombs"] = [((3, 5), 3)]
+
+        # RIGHT also escapes the blast line.
+        new_state["self"] = ("player", 0, False, (4, 3))
+        new_state["bombs"] = [((3, 5), 2)]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertIn(train.ESCAPED_BOMB_DANGER, events)
+        self.assertNotIn(train.MOVED_TOWARDS_CRATE, events)
+        self.assertNotIn(train.MOVED_AWAY_FROM_CRATE, events)
+
+
+    def test_f2_does_not_shape_crate_navigation_when_coin_is_visible(self):
+        """Reward Test Q: Visible coin navigation takes priority over crate search."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f2",
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        # Crate path would recommend RIGHT.
+        old_state["field"][5, 3] = 1
+        new_state["field"][5, 3] = 1
+
+        old_state["self"] = ("player", 0, True, (2, 3))
+        new_state["self"] = ("player", 0, True, (3, 3))
+
+        # But a visible coin already exists.
+        old_state["coins"] = [(2, 1)]
+        new_state["coins"] = [(2, 1)]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertNotIn(train.MOVED_TOWARDS_CRATE, events)
+        self.assertNotIn(train.MOVED_AWAY_FROM_CRATE, events)
+
+
     def test_shortest_path_direction_right(self):
         """Path Test A: Test that a target directly to the right returns RIGHT as the valid first step."""
         state = self._game_state()
