@@ -15,8 +15,8 @@ Transition = namedtuple('Transition',
 TRANSITION_HISTORY_SIZE = 3  # keep only ... last transitions
 RECORD_ENEMY_TRANSITIONS = 1.0  # record enemy transitions with probability ...
 EPSILON_START = 1.0
-EPSILON_MIN = 0.05
-EPSILON_DECAY = 0.995
+EPSILON_MIN = 0.01
+EPSILON_DECAY = 0.99
 
 # Events
 # PLACEHOLDER_EVENT = "PLACEHOLDER"
