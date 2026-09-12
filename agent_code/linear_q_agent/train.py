@@ -118,17 +118,16 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     state = state_to_features(old_game_state, self.feature_mode)
     next_state = state_to_features(new_game_state, self.feature_mode)
 
-    # Custom event: escaped bomb danger
-    if self.feature_mode == "f2":
-        old_in_danger = state[20] == 1.0
-        new_in_danger = next_state[20]  == 1.0
+    # Bomb danger status
+    old_in_danger = self.feature_mode == "f2" and state[20] == 1.0
+    new_in_danger = self.feature_mode == "f2" and next_state[20]  == 1.0
 
-        if old_in_danger and not new_in_danger:
-            events.append(ESCAPED_BOMB_DANGER)
+    # Custom event: escaped bomb danger
+    if old_in_danger and not new_in_danger:
+        events.append(ESCAPED_BOMB_DANGER)
 
     # Custom event: move along crate path
     if self.feature_mode == "f2":
-        old_in_danger = state[20] == 1.0
         crate_path = state[16:20]
 
         # Only search for crates when there is no visible coin and escaping a bomb is not currently more important.
@@ -165,8 +164,7 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
 
     # Movement toward / away from coin
     # Skip distance shaping when a coin was collected, because the nearest target coin may have changed.
-    if old_distance > 0 and e.COIN_COLLECTED not in events:
-
+    if not old_in_danger and old_distance > 0 and e.COIN_COLLECTED not in events:
         if new_distance < old_distance:
             events.append(MOVED_TOWARDS_COIN)
 
@@ -174,7 +172,7 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
             events.append(MOVED_AWAY_FROM_COIN)
 
     # Penalize unnecessary WAIT
-    if self_action == "WAIT" and old_distance > 0:
+    if not old_in_danger and self_action == "WAIT" and old_distance > 0:
         events.append(UNNECESSARILY_WAITED)
 
     # Penalize oscillation
