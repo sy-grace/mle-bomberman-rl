@@ -103,7 +103,7 @@ REM TRAINING
 REM ============================================================
 
 set "MODEL_START_MODE=fresh"
-set "BOMBERMAN_REWARD_MODE=%REWARD_MODE%"
+set "REWARD_MODE=%REWARD_MODE%"
 
 echo Starting training...
 echo.

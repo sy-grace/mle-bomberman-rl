@@ -99,7 +99,7 @@ def select_action(self, features: np.ndarray) -> str:
     # Choose action with the highest Q-value
     action_index = int(np.argmax(q_values))
 
-    self.logger.debug("choosing action witht he highest Q-value.")
+    self.logger.debug("choosing action with the highest Q-value.")
     return ACTIONS[action_index]
 
 
