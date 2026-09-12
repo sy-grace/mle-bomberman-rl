@@ -40,7 +40,7 @@ TASK1_RUN_PATTERN = re.compile(
 # Task 2 currently uses F2. Supporting sparse here as well keeps the
 # summarizer useful if a sparse control experiment is added later.
 TASK2_RUN_PATTERN = re.compile(
-    r"^(f2)_(sparse|basic|shaped)_seed(\d+)$"
+    r"^(f[23])_(sparse|basic|shaped)_seed(\d+)$"
 )
 
 

@@ -289,6 +289,134 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertEqual(features[24], 1.0) # RIGHT
 
 
+    def test_f3_feature_vector_has_twenty_six_features(self):
+        """Feature Test T: Verify that F3 produces a 26-dimensional feature vector."""
+        state = self._game_state()
+        features = state_to_features(state, "f3")
+        self.assertEqual(features.shape, (26,))
+
+
+    def test_f3_preserves_all_f2_features(self):
+        """Feature Test U: F3 must preserve the complete F2 representation."""
+        state = self._game_state()
+
+        f2 = state_to_features(state, "f2")
+        f3 = state_to_features(state, "f3")
+
+        np.testing.assert_array_equal(f3[:25], f2)
+
+
+    def test_f3_uses_task2_action_space_with_bomb(self):
+        """Feature Test V: F3 uses the six Task 2 actions."""
+        actions = callbacks.actions_for_feature_mode("f3")
+        expected = ["UP", "DOWN", "LEFT", "RIGHT", "WAIT", "BOMB"]
+        self.assertEqual(actions, expected)
+
+
+    def test_f3_fresh_model_uses_twenty_six_inputs_and_six_outputs(self):
+        """Feature Test W: Fresh F3 training creates a 26-input, 6-action model."""
+        agent = SimpleNamespace(train=True, logger=Mock())
+
+        with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "FEATURE_MODE": "f3"}, clear=True):
+            callbacks.setup(agent)
+
+        self.assertEqual(agent.model.input_size, 26)
+        self.assertEqual(agent.model.output_size, 6)
+
+
+    def test_f3_marks_safe_bomb_placement_in_open_space(self):
+        """Feature Test X: Bomb placement is safe when an escape route exists."""
+        state = self._game_state()
+        state["self"] = ("player", 0, True, (3, 3))
+        features = state_to_features(state, "f3")
+        self.assertEqual(features[25], 1.0)
+
+
+    def test_f3_safe_to_bomb_is_zero_when_bomb_unavailable(self):
+        """Feature Test Y: safe_to_bomb is zero when BOMB cannot be placed."""
+        state = self._game_state()
+        state["self"] = ("player", 0, False, (3, 3))
+        features = state_to_features(state, "f3")
+        self.assertEqual(features[25], 0.0)
+
+
+    def test_f3_detects_unsafe_bomb_in_dead_end(self):
+        """Feature Test Z: Bomb placement is unsafe when no escape route exists."""
+        state = self._game_state()
+        field = np.full((7, 7), -1, dtype=int)
+
+        # Agent and a corridor that stays entirely inside the bomb blast.
+        field[3, 3] = 0
+        field[3, 2] = 0
+        field[3, 1] = 0
+
+        state["field"] = field
+        state["self"] = ("player", 0, True, (3, 3))
+        state["coins"] = []
+        state["explosion_map"] = np.zeros((7, 7))
+
+        features = state_to_features(state, "f3")
+
+        self.assertEqual(features[25], 0.0)
+
+
+    def test_f3_allows_escape_in_exactly_four_moves(self):
+        """Feature Test AA: Escape on the fourth movement step is still safe."""
+        field = np.full((9, 9), -1, dtype=int)
+
+        start = (4, 4)
+
+        # Three steps upward remain inside the blast.
+        field[4, 4] = 0
+        field[4, 3] = 0
+        field[4, 2] = 0
+        field[4, 1] = 0
+
+        # Fourth step leaves the blast line.
+        field[5, 1] = 0
+
+        safe = callbacks.can_escape_after_bomb(field, start, bombs=[], explosion_map=np.zeros((9, 9)))
+
+        self.assertTrue(safe)
+
+
+    def test_f3_crate_blocks_escape_route(self):
+        """Feature Test AB: Crates cannot be crossed while escaping."""
+        field = np.full((9, 9), -1, dtype=int)
+
+        start = (4, 4)
+
+        field[4, 4] = 0
+        field[4, 3] = 0
+        field[4, 2] = 1 # crate blocks the only route
+        field[4, 1] = 0
+        field[5, 1] = 0
+
+        safe = callbacks.can_escape_after_bomb(field, start, bombs=[], explosion_map=np.zeros((9, 9)))
+
+        self.assertFalse(safe)
+
+
+    def test_f3_active_explosion_blocks_escape_route(self):
+        """Feature Test AC: Active explosions cannot be used as escape paths."""
+        field = np.full((9, 9), -1, dtype=int)
+
+        start = (4, 4)
+
+        field[4, 4] = 0
+        field[4, 3] = 0
+        field[4, 2] = 0
+        field[4, 1] = 0
+        field[5, 1] = 0
+
+        explosion_map = np.zeros((9, 9))
+        explosion_map[4, 3] = 1
+
+        safe = callbacks.can_escape_after_bomb(field, start, bombs=[], explosion_map=explosion_map)
+
+        self.assertFalse(safe)
+
+
     def test_predict_returns_one_value_per_action(self):
         model = Linear_QModel(input_size=7, output_size=len(callbacks.actions_for_feature_mode("f0")), seed=1)
         features = np.ones(7)

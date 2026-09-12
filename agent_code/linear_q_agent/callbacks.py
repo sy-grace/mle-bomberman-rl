@@ -17,9 +17,10 @@ TASK1_ACTIONS = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'WAIT']
 TASK2_ACTIONS = TASK1_ACTIONS + ["BOMB"]
 
 EPSILON_START = 1.0
-FEATURE_SIZES = {"f0": 7, "f1": 11, "f2": 25}
+FEATURE_SIZES = {"f0": 7, "f1": 11, "f2": 25, "f3": 26}
 
 BOMB_POWER = 3
+BOMB_TIMER = 4
 
 def setup(self):
     """
@@ -48,7 +49,7 @@ def setup(self):
     self.feature_mode = os.getenv("FEATURE_MODE", "f1")
 
     if self.feature_mode not in FEATURE_SIZES:
-        raise ValueError("FEATURE_MODE must be one of 'f0', 'f1', or 'f2'.")
+        raise ValueError("FEATURE_MODE must be one of 'f0', 'f1', 'f2', or 'f3'.")
 
     self.feature_size = FEATURE_SIZES[self.feature_mode]
     self.logger.info(f"Feature mode: {self.feature_mode} ({self.feature_size} features)")
@@ -125,7 +126,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
         return None
 
     if feature_mode not in FEATURE_SIZES:
-        raise ValueError("feature_mode must be one of 'f0', 'f1', or 'f2'.")
+        raise ValueError("feature_mode must be one of 'f0', 'f1', 'f2', or 'f3'.")
 
     # Get the current location of the agent
     field = game_state["field"] # np.ndarray
@@ -145,6 +146,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
     #           crate_path_U, crate_path_D, crate_path_L, crate_path_R, 
     #           in_bomb_danger, 
     #           escape_U, escape_D, escape_L, escape_R]
+    # F3: F2 + [safe_to_bomb]
     feature_size = FEATURE_SIZES[feature_mode]
     features = np.zeros(feature_size)
 
@@ -188,11 +190,11 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
                 closest_distance = manhattan_distance
                 closest_coin = coin
 
-        if closest_coin is not None and feature_mode in {"f1", "f2"}:
+        if closest_coin is not None and feature_mode in {"f1", "f2", "f3"}:
             path_directions = shortest_path_directions(field, agent[3], closest_coin)
             features[7:11] = path_directions
 
-    if feature_mode == "f2":
+    if feature_mode in {"f2", "f3"}:
         # 11: bomb available
         features[11] = float(agent[2] > 0)
 
@@ -232,6 +234,10 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
         if features[20] == 1.0:
             features[21:25] = shortest_path_directions_to_any(escape_field, agent[3], safe_targets)
 
+        # 25: safe to bomb
+        if feature_mode == "f3":
+            features[25] = float(agent[2] and can_escape_after_bomb(field, agent[3], bombs, explosion_map))
+
     # Return the final feature vector
     return features
 
@@ -242,7 +248,7 @@ def shortest_path_directions(field, start, target):
 
 
 def actions_for_feature_mode(feature_mode):
-    if feature_mode == "f2":
+    if feature_mode in {"f2", "f3"}:
         return TASK2_ACTIONS
     return TASK1_ACTIONS
 
@@ -348,3 +354,56 @@ def bomb_danger_tiles(field, bombs, explosion_map=None):
         danger_tiles.update(zip(xs, ys))
 
     return danger_tiles
+
+
+def can_escape_after_bomb(field, start, bombs, explosion_map=None):
+    """Return True if a bomb placed at start still allows escape within BOMB_TIMER moves."""
+    hypothetical_bombs = list(bombs) + [(start, BOMB_TIMER)]
+    danger_tiles = bomb_danger_tiles(field, hypothetical_bombs, explosion_map)
+    existing_bomb_tiles = {position for position, _timer in bombs}
+
+    queue = deque([(start, 0)])
+    visited = {start}
+
+    while queue:
+        (x, y), distance = queue.popleft()
+
+        # We found a tile outside the future blast zone.
+        if distance > 0 and (x, y) not in danger_tiles:
+            return True
+
+        # No more movement possible before explosion.
+        if distance >= BOMB_TIMER:
+            continue
+
+        for dx, dy in DIRECTIONS:
+            nx = x + dx
+            ny = y + dy
+            next_pos = (nx, ny)
+
+            if not (0 <= nx < field.shape[0] and 0 <= ny < field.shape[1]):
+                continue
+
+            # Walls and crates are not walkable.
+            if field[nx, ny] != 0:
+                continue
+
+            # Existing bombs are obstacles.
+            if next_pos in existing_bomb_tiles:
+                continue
+
+            # After leaving the newly placed bomb tile, the agent cannot walk back onto it.
+            if next_pos == start:
+                continue
+
+            # Never walk through an active explosion.
+            if explosion_map is not None and explosion_map[nx, ny] > 0:
+                continue
+
+            if next_pos in visited:
+                continue
+
+            visited.add(next_pos)
+            queue.append((next_pos, distance + 1))
+
+    return False
