@@ -24,7 +24,7 @@ def temporary_working_directory(directory):
         os.chdir(previous_directory)
 
 
-class LinearQAgentTest(unittest.TestCase):
+class LinearSARSAAgentTest(unittest.TestCase):
     @staticmethod
     def _game_state():
         field = np.ones((7, 7), dtype=int)
@@ -144,35 +144,6 @@ class LinearQAgentTest(unittest.TestCase):
         np.testing.assert_allclose(model.weights[:, 0], old_weights[:, 0])
 
 
-    def test_non_terminal_update_uses_next_state_value(self):
-        model = Linear_SARSAModel(
-            input_size=2,
-            output_size=2,
-            learning_rate=0.5,
-            gamma=0.9,
-            lambda_=0.0,
-            seed=1,
-        )
-        model.weights[:] = 0.0
-
-        model.weights[:, 0] = [1.0, 0.0]
-        model.weights[:, 1] = [0.0, 2.0]
-
-        state = np.array([1.0, 0.0])
-        next_state = np.array([0.0, 1.0])
-
-        td_error = model.update(
-            state=state,
-            action=0,
-            reward=0.0,
-            next_state=next_state,
-            next_action=0,
-        )
-
-        # 0 - 1 = 1, when sarsa target is 0 + 0.9(0) = 0
-        self.assertAlmostEqual(td_error, -1.0)
-
-
     def test_act_explores_when_random_value_is_below_epsilon(self):
         agent = SimpleNamespace(
             train=True,
@@ -218,12 +189,15 @@ class LinearQAgentTest(unittest.TestCase):
             epsilon_min=0.05,
             epsilon_decay=0.995,
             transitions=[],
-            feature_mode="f1"
+            feature_mode="f1",
+            pending_action=None
         )
+
         old_state = self._game_state()
         new_state = self._game_state()
 
-        with patch.object(train, "reward_from_events", return_value=2.0):
+        with patch.object(train, "reward_from_events", return_value=2.0), \
+            patch.object(train, "select_action", return_value="DOWN"):
             train.game_events_occurred(agent, old_state, "LEFT", new_state, [])
 
         state, action, next_state, reward = agent.transitions[-1]
@@ -232,13 +206,15 @@ class LinearQAgentTest(unittest.TestCase):
         np.testing.assert_allclose(state, state_to_features(old_state, "f1"))
         np.testing.assert_allclose(next_state, state_to_features(new_state, "f1"))
         agent.model.update.assert_called_once()
-        update_state, update_action, update_reward, update_next_state = (
+        update_state, update_action, update_reward, update_next_state, update_next_action = (
             agent.model.update.call_args.args
         )
         np.testing.assert_allclose(update_state, state)
         self.assertEqual(update_action, train.ACTION_TO_INDEX["LEFT"])
         self.assertEqual(update_reward, 2.0)
         np.testing.assert_allclose(update_next_state, next_state)
+        self.assertEqual(update_next_action, train.ACTION_TO_INDEX["DOWN"])
+        self.assertEqual(agent.pending_action, "DOWN")
         self.assertAlmostEqual(agent.epsilon, 0.5)
 
 
@@ -280,7 +256,7 @@ class LinearQAgentTest(unittest.TestCase):
         """Reward Test B: Test that the reward mode is read from the environment variable."""
         agent = SimpleNamespace(logger=Mock())
 
-        with patch.dict(os.environ, {"BOMBERMAN_REWARD_MODE": "sparse"}, clear=True):
+        with patch.dict(os.environ, {"REWARD_MODE": "sparse"}, clear=True):
             train.setup_training(agent)
 
         self.assertEqual(agent.reward_mode, "sparse")
@@ -290,7 +266,7 @@ class LinearQAgentTest(unittest.TestCase):
         """Reward Test C: Test that an invalid reward mode raises a ValueError."""
         agent = SimpleNamespace(logger=Mock())
 
-        with patch.dict(os.environ, {"BOMBERMAN_REWARD_MODE": "grape"}, clear=True):
+        with patch.dict(os.environ, {"REWARD_MODE": "grape"}, clear=True):
             with self.assertRaises(ValueError):
                 train.setup_training(agent)
 
@@ -356,7 +332,8 @@ class LinearQAgentTest(unittest.TestCase):
 
         events = [game_events.COIN_COLLECTED]
 
-        with patch.object(train, "reward_from_events", return_value=0.0):
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="RIGHT"):
             train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
 
         self.assertNotIn(train.MOVED_AWAY_FROM_COIN, events)
@@ -726,3 +703,15 @@ class LinearQAgentTest(unittest.TestCase):
         td_error = model.update(state=state, action=0, reward=0.0, next_state=next_state, next_action=0)
 
         self.assertAlmostEqual(td_error, -1.0)
+
+
+    def test_act_returns_pending_action_without_resampling(self):
+        """Verify that a pending SARSA action is executed without selecting a new action."""
+        agent = SimpleNamespace(train=True, logger=Mock(), rng=Mock(), model=Mock(), pending_action="DOWN")
+        action = callbacks.act(agent, self._game_state())
+
+        self.assertEqual(action, "DOWN")
+        self.assertIsNone(agent.pending_action)
+
+        agent.rng.random.assert_not_called()
+        agent.model.predict.assert_not_called()

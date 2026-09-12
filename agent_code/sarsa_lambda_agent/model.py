@@ -39,14 +39,17 @@ class Linear_SARSAModel:
 
         self.eligibility_traces = np.zeros_like(self.weights)
 
+
     def __call__(self, features: np.ndarray) -> np.ndarray:
         # Return one Q-value for each action.
         features = self.validate_features(features)
         return features @ self.weights
 
+
     def predict(self, features: np.ndarray) -> np.ndarray:
         # Explicit alias for evaluating Q(s, a) for every action.
         return self(features)
+
 
     def update(
         self,
@@ -85,6 +88,7 @@ class Linear_SARSAModel:
         self.weights += self.learning_rate * td_error * self.eligibility_traces
         return td_error
 
+
     def validate_features(self, features: np.ndarray) -> np.ndarray:
         features = np.asarray(features, dtype=np.float64)
         if features.shape != (self.input_size,):
@@ -95,6 +99,7 @@ class Linear_SARSAModel:
         if not np.isfinite(features).all():
             raise ValueError("features must contain only finite values")
         return features
+
 
     def reset_traces(self) -> None:
         self.eligibility_traces.fill(0.0)

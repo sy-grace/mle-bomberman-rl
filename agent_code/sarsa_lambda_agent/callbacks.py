@@ -73,11 +73,21 @@ def setup(self):
 
 
 def act(self, game_state: dict) -> str:
-    """
-    Agent should parse the input, think, and take a decision.
-    """
-    features = state_to_features(game_state, self.feature_mode)
+    """Return the pending SARSA action or select a new action."""
 
+    # Pending SARSA action
+    if self.train and getattr(self, "pending_action", None) is not None:
+        action = self.pending_action
+        self.pending_action = None
+        return action
+
+    # New action
+    features = state_to_features(game_state, self.feature_mode)
+    return select_action(self, features)
+
+
+def select_action(self, features: np.ndarray) -> str:
+    """Select an action according to the current epsilon-greedy policy."""
     # Exploration during training
     if self.train and self.rng.random() < self.epsilon:
         self.logger.debug("Choosing action purely at random.")
@@ -86,13 +96,11 @@ def act(self, game_state: dict) -> str:
     # Exploitation
     q_values = self.model.predict(features)
 
-    # Choose action with highest Q-value
+    # Choose action with the highest Q-value
     action_index = int(np.argmax(q_values))
-    action = ACTIONS[action_index]
 
-    self.logger.debug("Choosing action with the highest Q-value.")
-
-    return action
+    self.logger.debug("choosing action witht he highest Q-value.")
+    return ACTIONS[action_index]
 
 
 def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:

@@ -5,7 +5,7 @@ import pickle
 from typing import List
 
 import events as e
-from .callbacks import state_to_features
+from .callbacks import state_to_features, select_action
 
 # This is only an example!
 Transition = namedtuple('Transition',
@@ -71,12 +71,13 @@ def setup_training(self):
     self.epsilon_decay = EPSILON_DECAY
 
     # Movement tracking
+    self.pending_action = None
     self.last_action = None
     self.previous_action = None
     self.last_distance = None
 
     # Reward configuration
-    self.reward_mode = os.getenv("BOMBERMAN_REWARD_MODE", "basic").lower()
+    self.reward_mode = os.getenv("REWARD_MODE", "basic").lower()
 
     if self.reward_mode not in REWARD_CONFIGS:
         raise ValueError(f"Invalid reward mode: {self.reward_mode}.\n Choose from {list(REWARD_CONFIGS.keys())}.")
@@ -153,7 +154,11 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     # Model Learn
     reward = reward_from_events(self, events)
     action = ACTION_TO_INDEX[self_action]
-    self.model.update(state, action, reward, next_state)
+
+    next_action = select_action(self, next_state)
+    self.pending_action = next_action
+
+    self.model.update(state, action, reward, next_state, ACTION_TO_INDEX[next_action])
     self.transitions.append(Transition(state, self_action, next_state, reward))
 
 
@@ -177,6 +182,8 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
     self.transitions.append(Transition(state, last_action, None, reward))
 
     # Reset each round
+    self.model.reset_traces()
+    self.pending_action = None
     self.previous_action = None
     self.last_action = None
     self.last_distance = None
