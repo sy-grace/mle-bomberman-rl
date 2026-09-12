@@ -1,5 +1,6 @@
 # This utility script was generated with assistance from ChatGPT.
 
+import argparse
 import csv
 import json
 import re
@@ -8,13 +9,21 @@ from pathlib import Path
 from statistics import mean, median, stdev
 
 
-RESULT_ROOT = Path("results/task1/linear_q_agent")
+SUPPORTED_AGENTS = {
+    "linear_q_agent": "linear_q",
+    "sarsa_lambda_agent": "sarsa_lambda",
+}
 
-# Run-level results for debugging/reproducibility.
-RUNS_CSV = Path("docs/experiments/task1_linear_q_runs.csv")
 
-# Aggregated results for team sharing/reporting.
-SUMMARY_CSV = Path("docs/experiments/task1_linear_q_summary.csv")
+def experiment_paths(agent):
+    """Return the result directory and output CSV paths for one agent."""
+    output_name = SUPPORTED_AGENTS[agent]
+
+    result_root = Path("results/task1") / agent
+    runs_csv = Path(f"docs/experiments/task1_{output_name}_runs.csv")
+    summary_csv = Path(f"docs/experiments/task1_{output_name}_summary.csv")
+
+    return result_root, runs_csv, summary_csv
 
 RUN_PATTERN = re.compile(
     r"^(f[01])_(sparse|basic|shaped)_seed(\d+)$"
@@ -317,8 +326,8 @@ def print_text_table(title, headers, rows):
         print(format_row(row))
 
 
-def save_runs_csv(results):
-    RUNS_CSV.parent.mkdir(parents=True, exist_ok=True)
+def save_runs_csv(results, runs_csv):
+    runs_csv.parent.mkdir(parents=True, exist_ok=True)
 
     fieldnames = [
         "feature",
@@ -333,14 +342,14 @@ def save_runs_csv(results):
         "completed_avg_steps",
     ]
 
-    with open(RUNS_CSV, "w", newline="", encoding="utf-8") as f:
+    with open(runs_csv, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(results)
 
 
-def save_summary_csv(summaries):
-    SUMMARY_CSV.parent.mkdir(parents=True, exist_ok=True)
+def save_summary_csv(summaries, summary_csv):
+    summary_csv.parent.mkdir(parents=True, exist_ok=True)
 
     fieldnames = [
         "feature",
@@ -363,21 +372,34 @@ def save_summary_csv(summaries):
         "completed_avg_steps_std",
     ]
 
-    with open(SUMMARY_CSV, "w", newline="", encoding="utf-8") as f:
+    with open(summary_csv, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(summaries)
 
 
 def main():
-    if not RESULT_ROOT.exists():
+    parser = argparse.ArgumentParser(
+        description="Summarize Task 1 experiment results for one agent."
+    )
+    parser.add_argument(
+        "--agent",
+        choices=sorted(SUPPORTED_AGENTS),
+        default="linear_q_agent",
+        help="Agent result directory to summarize (default: linear_q_agent).",
+    )
+    args = parser.parse_args()
+
+    result_root, runs_csv, summary_csv = experiment_paths(args.agent)
+
+    if not result_root.exists():
         raise FileNotFoundError(
-            f"Result directory not found: {RESULT_ROOT}"
+            f"Result directory not found: {result_root}"
         )
 
     results = []
 
-    for run_dir in RESULT_ROOT.iterdir():
+    for run_dir in result_root.iterdir():
         if not run_dir.is_dir():
             continue
 
@@ -395,20 +417,21 @@ def main():
     )
 
     if not results:
-        print("No complete Task 1 experiment results found.")
+        print(f"No complete Task 1 experiment results found for {args.agent}.")
         return
 
     summaries = aggregate_results(results)
 
+    print(f"Agent: {args.agent}")
     print_run_table(results)
     print_summary_table(summaries)
 
-    save_runs_csv(results)
-    save_summary_csv(summaries)
+    save_runs_csv(results, runs_csv)
+    save_summary_csv(summaries, summary_csv)
 
     print()
-    print(f"Saved run-level results: {RUNS_CSV}")
-    print(f"Saved aggregated summary: {SUMMARY_CSV}")
+    print(f"Saved run-level results: {runs_csv}")
+    print(f"Saved aggregated summary: {summary_csv}")
 
 
 if __name__ == "__main__":
