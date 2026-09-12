@@ -1,43 +1,26 @@
 # This utility script was generated with assistance from ChatGPT.
 
-import argparse
 import csv
 import json
 import re
-from collections import defaultdict
 from pathlib import Path
 from statistics import mean, median, stdev
 
 
-SUPPORTED_AGENTS = {
-    "linear_q_agent": "linear_q",
-    "sarsa_lambda_agent": "sarsa_lambda",
-}
+SEEDS = (123, 456, 2026)
 
+# Existing formal SARSA(lambda=0.8) Task 1 results.
+LAMBDA_08_ROOT = Path("results/task1/sarsa_lambda_agent")
 
-def experiment_paths(agent):
-    """Return the result directory and output CSV paths for one agent."""
-    output_name = SUPPORTED_AGENTS[agent]
+# New SARSA(0), lambda=0.0, ablation results.
+LAMBDA_00_ROOT = Path("results/task1_lambda_ablation/sarsa_lambda_agent")
 
-    result_root = Path("results/task1") / agent
-    runs_csv = Path(f"docs/experiments/task1_{output_name}_runs.csv")
-    summary_csv = Path(f"docs/experiments/task1_{output_name}_summary.csv")
-
-    return result_root, runs_csv, summary_csv
-
-RUN_PATTERN = re.compile(
-    r"^(f[01])_(sparse|basic|shaped)_seed(\d+)$"
-)
+RUNS_CSV = Path("docs/experiments/task1_sarsa_lambda_ablation_runs.csv")
+SUMMARY_CSV = Path("docs/experiments/task1_sarsa_lambda_ablation_summary.csv")
 
 TOTAL_COINS = 50
 MAX_STEPS = 400
 FINAL_TRAIN_WINDOW = 100
-
-REWARD_ORDER = {
-    "sparse": 0,
-    "basic": 1,
-    "shaped": 2,
-}
 
 METRICS = [
     "train_avg_coins",
@@ -46,6 +29,7 @@ METRICS = [
     "eval_median_coins",
     "completion_rate",
     "timeout_rate",
+    "completed_avg_steps",
 ]
 
 
@@ -55,11 +39,6 @@ def load_json(path):
 
 
 def round_number(name):
-    """
-    Example:
-    'Round 01 (2026-09-11 ...)' -> 1
-    'Round 600 (...)' -> 600
-    """
     match = re.search(r"Round\s+(\d+)", name)
     if match is None:
         raise ValueError(f"Could not parse round number from: {name}")
@@ -81,19 +60,12 @@ def extract_rounds(stats):
     return sorted(rounds, key=lambda x: x["round"])
 
 
-def analyze_run(run_dir):
-    match = RUN_PATTERN.match(run_dir.name)
-
-    if match is None:
-        return None
-
-    feature_mode, reward_mode, seed = match.groups()
-
+def analyze_run(lambda_value, seed, run_dir):
     train_path = run_dir / "train.json"
     eval_path = run_dir / "eval.json"
 
     if not train_path.exists() or not eval_path.exists():
-        print(f"Skipping incomplete run: {run_dir.name}")
+        print(f"Skipping incomplete run: {run_dir}")
         return None
 
     train_stats = load_json(train_path)
@@ -122,9 +94,8 @@ def analyze_run(run_dir):
     completed_steps = [r["steps"] for r in completed]
 
     return {
-        "feature": feature_mode.upper(),
-        "reward": reward_mode,
-        "seed": int(seed),
+        "lambda": lambda_value,
+        "seed": seed,
         "train_avg_coins": mean(train_coins),
         "train_final100_avg_coins": mean(final_train_coins),
         "eval_avg_coins": mean(eval_coins),
@@ -138,84 +109,98 @@ def analyze_run(run_dir):
     }
 
 
+def collect_results():
+    results = []
+
+    for seed in SEEDS:
+        lambda_08_dir = LAMBDA_08_ROOT / f"f1_basic_seed{seed}"
+        result = analyze_run(0.8, seed, lambda_08_dir)
+        if result is not None:
+            results.append(result)
+
+        lambda_00_dir = LAMBDA_00_ROOT / f"lambda0.0_seed{seed}"
+        result = analyze_run(0.0, seed, lambda_00_dir)
+        if result is not None:
+            results.append(result)
+
+    return sorted(results, key=lambda r: (r["lambda"], r["seed"]))
+
+
 def sample_std(values):
-    """Return sample standard deviation, or None if fewer than 2 values."""
     return stdev(values) if len(values) >= 2 else None
 
 
 def aggregate_results(results):
-    grouped = defaultdict(list)
-
-    for result in results:
-        key = (result["feature"], result["reward"])
-        grouped[key].append(result)
-
     summaries = []
 
-    for (feature, reward), runs in grouped.items():
+    for lambda_value in sorted({r["lambda"] for r in results}):
+        runs = [r for r in results if r["lambda"] == lambda_value]
+
         row = {
-            "feature": feature,
-            "reward": reward,
+            "lambda": lambda_value,
             "n_seeds": len(runs),
-            "seeds": ",".join(
-                str(r["seed"])
-                for r in sorted(runs, key=lambda r: r["seed"])
-            ),
+            "seeds": ",".join(str(r["seed"]) for r in runs),
         }
 
         for metric in METRICS:
-            values = [r[metric] for r in runs]
-            row[f"{metric}_mean"] = mean(values)
-            row[f"{metric}_std"] = sample_std(values)
+            values = [
+                r[metric]
+                for r in runs
+                if r[metric] is not None
+            ]
 
-        completed_steps = [
-            r["completed_avg_steps"]
-            for r in runs
-            if r["completed_avg_steps"] is not None
-        ]
-
-        row["completed_avg_steps_mean"] = (
-            mean(completed_steps)
-            if completed_steps else None
-        )
-        row["completed_avg_steps_std"] = (
-            sample_std(completed_steps)
-            if completed_steps else None
-        )
+            row[f"{metric}_mean"] = mean(values) if values else None
+            row[f"{metric}_std"] = sample_std(values) if values else None
 
         summaries.append(row)
-
-    summaries.sort(
-        key=lambda r: (
-            r["feature"],
-            REWARD_ORDER[r["reward"]],
-        )
-    )
 
     return summaries
 
 
 def format_mean_std(mean_value, std_value, decimals=2, percent=False):
+    if mean_value is None:
+        return "-"
+
     if percent:
         mean_value *= 100
         if std_value is not None:
             std_value *= 100
 
+    suffix = "%" if percent else ""
+
     if std_value is None:
-        suffix = "%" if percent else ""
         return f"{mean_value:.{decimals}f}{suffix}"
 
-    suffix = "%" if percent else ""
     return (
         f"{mean_value:.{decimals}f} +/- "
         f"{std_value:.{decimals}f}{suffix}"
     )
 
 
+def print_text_table(title, headers, rows):
+    widths = [
+        max(len(headers[i]), *(len(row[i]) for row in rows))
+        for i in range(len(headers))
+    ]
+
+    def format_row(row):
+        return " | ".join(
+            value.ljust(widths[i])
+            for i, value in enumerate(row)
+        )
+
+    print()
+    print(title)
+    print(format_row(headers))
+    print("-+-".join("-" * width for width in widths))
+
+    for row in rows:
+        print(format_row(row))
+
+
 def print_run_table(results):
     headers = [
-        "Feature",
-        "Reward",
+        "Lambda",
         "Seed",
         "Train avg",
         "Final 100",
@@ -223,15 +208,21 @@ def print_run_table(results):
         "Median",
         "Completion",
         "Timeout",
+        "Completed steps",
     ]
 
     rows = []
 
     for r in results:
+        completed_steps = (
+            f'{r["completed_avg_steps"]:.1f}'
+            if r["completed_avg_steps"] is not None
+            else "-"
+        )
+
         rows.append(
             [
-                r["feature"],
-                r["reward"],
+                f'{r["lambda"]:.1f}',
                 str(r["seed"]),
                 f'{r["train_avg_coins"]:.2f}',
                 f'{r["train_final100_avg_coins"]:.2f}',
@@ -239,16 +230,16 @@ def print_run_table(results):
                 f'{r["eval_median_coins"]:.1f}',
                 f'{100 * r["completion_rate"]:.1f}%',
                 f'{100 * r["timeout_rate"]:.1f}%',
+                completed_steps,
             ]
         )
 
-    print_text_table("Per-seed results", headers, rows)
+    print_text_table("Per-seed lambda ablation results", headers, rows)
 
 
 def print_summary_table(summaries):
     headers = [
-        "Feature",
-        "Reward",
+        "Lambda",
         "n",
         "Train avg",
         "Final 100",
@@ -256,6 +247,7 @@ def print_summary_table(summaries):
         "Median",
         "Completion",
         "Timeout",
+        "Completed steps",
     ]
 
     rows = []
@@ -263,8 +255,7 @@ def print_summary_table(summaries):
     for r in summaries:
         rows.append(
             [
-                r["feature"],
-                r["reward"],
+                f'{r["lambda"]:.1f}',
                 str(r["n_seeds"]),
                 format_mean_std(
                     r["train_avg_coins_mean"],
@@ -295,43 +286,26 @@ def print_summary_table(summaries):
                     decimals=1,
                     percent=True,
                 ),
+                format_mean_std(
+                    r["completed_avg_steps_mean"],
+                    r["completed_avg_steps_std"],
+                    decimals=1,
+                ),
             ]
         )
 
     print_text_table(
-        "Aggregated results (mean +/- sample std across seeds)",
+        "Aggregated lambda ablation results (mean +/- sample std across seeds)",
         headers,
         rows,
     )
 
 
-def print_text_table(title, headers, rows):
-    widths = [
-        max(len(headers[i]), *(len(row[i]) for row in rows))
-        for i in range(len(headers))
-    ]
-
-    def format_row(row):
-        return " | ".join(
-            value.ljust(widths[i])
-            for i, value in enumerate(row)
-        )
-
-    print()
-    print(title)
-    print(format_row(headers))
-    print("-+-".join("-" * width for width in widths))
-
-    for row in rows:
-        print(format_row(row))
-
-
-def save_runs_csv(results, runs_csv):
-    runs_csv.parent.mkdir(parents=True, exist_ok=True)
+def save_runs_csv(results):
+    RUNS_CSV.parent.mkdir(parents=True, exist_ok=True)
 
     fieldnames = [
-        "feature",
-        "reward",
+        "lambda",
         "seed",
         "train_avg_coins",
         "train_final100_avg_coins",
@@ -342,18 +316,17 @@ def save_runs_csv(results, runs_csv):
         "completed_avg_steps",
     ]
 
-    with open(runs_csv, "w", newline="", encoding="utf-8") as f:
+    with open(RUNS_CSV, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(results)
 
 
-def save_summary_csv(summaries, summary_csv):
-    summary_csv.parent.mkdir(parents=True, exist_ok=True)
+def save_summary_csv(summaries):
+    SUMMARY_CSV.parent.mkdir(parents=True, exist_ok=True)
 
     fieldnames = [
-        "feature",
-        "reward",
+        "lambda",
         "n_seeds",
         "seeds",
         "train_avg_coins_mean",
@@ -372,66 +345,37 @@ def save_summary_csv(summaries, summary_csv):
         "completed_avg_steps_std",
     ]
 
-    with open(summary_csv, "w", newline="", encoding="utf-8") as f:
+    with open(SUMMARY_CSV, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(summaries)
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Summarize Task 1 experiment results for one agent."
-    )
-    parser.add_argument(
-        "--agent",
-        choices=sorted(SUPPORTED_AGENTS),
-        default="linear_q_agent",
-        help="Agent result directory to summarize (default: linear_q_agent).",
-    )
-    args = parser.parse_args()
-
-    result_root, runs_csv, summary_csv = experiment_paths(args.agent)
-
-    if not result_root.exists():
-        raise FileNotFoundError(
-            f"Result directory not found: {result_root}"
-        )
-
-    results = []
-
-    for run_dir in result_root.iterdir():
-        if not run_dir.is_dir():
-            continue
-
-        result = analyze_run(run_dir)
-
-        if result is not None:
-            results.append(result)
-
-    results.sort(
-        key=lambda r: (
-            r["feature"],
-            REWARD_ORDER[r["reward"]],
-            r["seed"],
-        )
-    )
+    results = collect_results()
 
     if not results:
-        print(f"No complete Task 1 experiment results found for {args.agent}.")
+        print("No complete lambda ablation results found.")
         return
+
+    expected_runs = 2 * len(SEEDS)
+    if len(results) != expected_runs:
+        print(
+            f"Warning: expected {expected_runs} complete runs "
+            f"but found {len(results)}."
+        )
 
     summaries = aggregate_results(results)
 
-    print(f"Agent: {args.agent}")
     print_run_table(results)
     print_summary_table(summaries)
 
-    save_runs_csv(results, runs_csv)
-    save_summary_csv(summaries, summary_csv)
+    save_runs_csv(results)
+    save_summary_csv(summaries)
 
     print()
-    print(f"Saved run-level results: {runs_csv}")
-    print(f"Saved aggregated summary: {summary_csv}")
+    print(f"Saved run-level results: {RUNS_CSV}")
+    print(f"Saved aggregated summary: {SUMMARY_CSV}")
 
 
 if __name__ == "__main__":
