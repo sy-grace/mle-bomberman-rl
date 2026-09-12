@@ -19,6 +19,7 @@ TASK2_ACTIONS = TASK1_ACTIONS + ["BOMB"]
 EPSILON_START = 1.0
 FEATURE_SIZES = {"f0": 7, "f1": 11, "f2": 25}
 
+BOMB_POWER = 3
 
 def setup(self):
     """
@@ -205,8 +206,30 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
 
         # 16:20: path to crates [UP, DOWN, LEFT, RIGHT]
         crate_targets = crate_placement_targets(field)
-
         features[16:20] = shortest_path_directions_to_any(field, agent[3], crate_targets)
+
+        # 20: bomb_danger
+        bombs = game_state["bombs"]
+        explosion_map = game_state.get("explosion_map")
+
+        danger_tiles = bomb_danger_tiles(field, bombs, explosion_map)
+        features[20] = float(agent[3] in danger_tiles)
+
+        # 21:25: escape direction [UP, DOWN, LEFT, RIGHT]
+        safe_targets = set()
+
+        for x in range(field.shape[0]):
+            for y in range(field.shape[1]):
+                if field[x, y] == 0 and (x, y) not in danger_tiles:
+                    safe_targets.add((x, y))
+
+        escape_field = field.copy()
+
+        for (bomb_x, bomb_y), _timer in bombs:
+            escape_field[bomb_x, bomb_y] = -1
+
+        if features[20] == 1.0:
+            features[21:25] = shortest_path_directions_to_any(escape_field, agent[3], safe_targets)
 
     # Return the final feature vector
     return features
@@ -298,3 +321,29 @@ def shortest_path_directions_to_any(field, start, targets):
             path_directions[i] = 1.0
 
     return path_directions
+
+
+def bomb_danger_tiles(field, bombs, explosion_map=None):
+    danger_tiles = set()
+
+    for (bomb_x, bomb_y), _timer in bombs:
+        danger_tiles.add((bomb_x, bomb_y))
+
+        for dx, dy in DIRECTIONS:
+            for distance in range(1, BOMB_POWER + 1):
+                nx = bomb_x + dx * distance
+                ny = bomb_y + dy * distance
+
+                if not (0 <= nx < field.shape[0] and 0 <= ny < field.shape[1]):
+                    break
+
+                if field[nx, ny] == -1:
+                    break
+
+                danger_tiles.add((nx, ny))
+
+    if explosion_map is not None:
+        xs, ys = np.where(explosion_map > 0)
+        danger_tiles.update(zip(xs, ys))
+
+    return danger_tiles

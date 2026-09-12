@@ -34,6 +34,7 @@ class LinearQAgentTest(unittest.TestCase):
             "bombs": [],
             "coins": [(5, 4)],
             "self": ("player", 0, 1, (3, 3)),
+            "explosion_map": np.zeros((7, 7)),
             "step": 1,
         }
 
@@ -213,6 +214,62 @@ class LinearQAgentTest(unittest.TestCase):
 
         expected = np.zeros(4)
         np.testing.assert_array_equal(features[16:20], expected)
+
+
+    def test_f2_detects_bomb_danger(self):
+        """Feature Test O: Verify that F2 marks the agent as endangered by a bomb."""
+        state = self._game_state()
+
+        state["self"] = ("player", 0, 0, (3, 3))
+        state["bombs"] = [((3, 5), 3)]
+
+        features = state_to_features(state, "f2")
+
+        self.assertEqual(features[20], 1.0)
+
+
+    def test_f2_escape_is_zero_when_not_in_bomb_danger(self):
+        """Feature Test P: Verify that escape features remain zero when the agent is safe."""
+        state = self._game_state()
+        state["bombs"] = []
+
+        features = state_to_features(state, "f2")
+
+        self.assertEqual(features[20], 0.0)
+
+        expected = np.zeros(4)
+        np.testing.assert_array_equal(features[21:25], expected)
+
+
+    def test_f2_escape_points_toward_safe_tile(self):
+        """Feature Test Q: Verify that F2 points toward a reachable safe tile when in bomb danger."""
+        state = self._game_state()
+
+        state["self"] = ("player", 0, 0, (3, 3))
+        state["bombs"] = [((3, 5), 3)]
+
+        # Block LEFT so RIGHT is the only immediate safe direction.
+        state["field"][2, 3] = -1
+
+        features = state_to_features(state, "f2")
+
+        expected = np.array([0.0, 0.0, 0.0, 1.0])
+        np.testing.assert_array_equal(features[21:25], expected)
+
+
+    def test_f2_wall_blocks_bomb_danger(self):
+        """Feature Test R: Verify that a wall blocks a bomb blast before it reaches the agent."""
+        state = self._game_state()
+
+        state["self"] = ("player", 0, 1, (3, 3))
+        state["bombs"] = [((3, 5), 3)]
+
+        # Wall between agent and bomb
+        state["field"][3, 4] = -1
+
+        features = state_to_features(state, "f2")
+
+        self.assertEqual(features[20], 0.0)
 
 
     def test_predict_returns_one_value_per_action(self):
@@ -768,3 +825,11 @@ class LinearQAgentTest(unittest.TestCase):
                 callbacks.setup(agent_b)
 
             self.assertFalse(np.allclose(agent_a.model.weights, agent_b.model.weights))
+
+
+    def test_task2_action_indices_match_action_space(self):
+        """Action Test A: Verify that Task 2 action indices match the model output order."""
+        actions = callbacks.actions_for_feature_mode("f2")
+
+        for index, action in enumerate(actions):
+            self.assertEqual(train.ACTION_TO_INDEX[action], index)
