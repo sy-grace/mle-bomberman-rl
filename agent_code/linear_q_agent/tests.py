@@ -27,19 +27,20 @@ def temporary_working_directory(directory):
 class LinearQAgentTest(unittest.TestCase):
     @staticmethod
     def _game_state():
-        field = np.ones((7, 7), dtype=int)
+        field = np.full((7, 7), -1, dtype=int)
         field[1:-1, 1:-1] = 0
         return {
             "field": field,
             "bombs": [],
             "coins": [(5, 4)],
             "self": ("player", 0, 1, (3, 3)),
+            "explosion_map": np.zeros((7, 7)),
             "step": 1,
         }
 
 
     def test_features_all_directions_free(self):
-        """Test A: All directions are free."""
+        """Feature Test A: All directions are free."""
         state = self._game_state()
         features = state_to_features(state, "f1")
 
@@ -49,7 +50,7 @@ class LinearQAgentTest(unittest.TestCase):
 
 
     def test_features_up_blocked(self):
-        """Test B: Up tile is blocked."""
+        """Feature Test B: Up tile is blocked."""
         state = self._game_state()
 
         # UP of agent (3, 3) is (3, 2)
@@ -61,7 +62,7 @@ class LinearQAgentTest(unittest.TestCase):
 
 
     def test_features_coin_to_the_right(self):
-        """Test C: When there is a coin on the right"""
+        """Feature Test C: When there is a coin on the right"""
         state = self._game_state()
 
         # There is a coin at (5, 3), and the agent is at (3, 3)
@@ -73,7 +74,7 @@ class LinearQAgentTest(unittest.TestCase):
 
 
     def test_features_nearest_coin_select(self):
-        """Test D: Check if the agent chooses the nearest coin among all coins."""
+        """Feature Test D: Check if the agent chooses the nearest coin among all coins."""
         state = self._game_state()
 
         # There are two coins: one at (5, 4), and the other at (2, 2)
@@ -85,7 +86,7 @@ class LinearQAgentTest(unittest.TestCase):
 
 
     def test_features_no_coin(self):
-        """Test E: No coin in the field."""
+        """Feature Test E: No coin in the field."""
         state = self._game_state()
 
         # There is no coin in the field
@@ -97,7 +98,7 @@ class LinearQAgentTest(unittest.TestCase):
         
 
     def test_features_agent_in_corner(self):
-        """Test F: Agent is at a walkable corner next to border walls."""
+        """Feature Test F: Agent is at a walkable corner next to border walls."""
         state = self._game_state()
 
         # The agent is in the corner
@@ -108,13 +109,193 @@ class LinearQAgentTest(unittest.TestCase):
         np.testing.assert_array_equal(features[:5], expected)
         
 
+    def test_f2_feature_vector_has_twenty_five_features(self):
+        """Feature Test G: Verify that F2 produces a 25-dimensional feature vector."""
+        state = self._game_state()
+        features = state_to_features(state, "f2")
+
+        expected = (25,)
+        self.assertEqual(features.shape, expected)
+
+
+    def test_f1_uses_task1_action_space(self):
+        """Feature Test H: Verify that F1 uses the five Task 1 actions without BOMB."""
+        actions = callbacks.actions_for_feature_mode("f1")
+
+        expected = ["UP", "DOWN", "LEFT", "RIGHT", "WAIT"]
+        self.assertEqual(actions, expected)
+
+
+    def test_f2_uses_task2_action_space_with_bomb(self):
+        """Feature Test I: Verify that F2 uses the six Task 2 actions including BOMB."""
+        actions = callbacks.actions_for_feature_mode("f2")
+
+        expected = ["UP", "DOWN", "LEFT", "RIGHT", "WAIT", "BOMB"]
+        self.assertEqual(actions, expected)
+
+
+    def test_f2_fresh_model_uses_twenty_five_inputs_and_six_outputs(self):
+        """Feature Test J: Verify that fresh F2 training creates a 25-input, 6-action model."""
+        agent = SimpleNamespace(
+            train=True,
+            logger=Mock()
+        )
+
+        with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "FEATURE_MODE": "f2"}, clear=True):
+            callbacks.setup(agent)
+
+        self.assertEqual(agent.model.input_size, 25)
+        self.assertEqual(agent.model.output_size, 6)
+
+
+    def test_f2_marks_available_bomb(self):
+        """Feature Test K: Verify that F2 marks an available bomb."""
+        state = self._game_state()
+
+        name, score, _, position = state["self"]
+        state["self"] = (name, score, True, position)
+
+        features = state_to_features(state, "f2")
+
+        expected = 1.0
+        np.testing.assert_array_equal(features[11], expected)
+
+
+    def test_f2_detects_adjacent_crate(self):
+        """Feature Test L: Verify that F2 detects a crate next to the agent."""
+        state = self._game_state()
+
+        x, y = 3, 3
+        name, score, bombs_left, _ = state["self"]
+        state["self"] = (name, score, bombs_left, (x, y))
+
+        field = state["field"].copy()
+        field[x, y] = 0
+        field[x, y - 1] = 1 # crate above agent
+        state["field"] = field
+
+        features = state_to_features(state, "f2")
+
+        expected = np.array([1.0, 0.0, 0.0, 0.0])
+        np.testing.assert_array_equal(features[12:16], expected)
+        
+
+    def test_f2_points_toward_nearest_crate_placement_tile(self):
+        """Feature Test M: Verify that F2 points toward a reachable bomb-placement tile near a crate."""
+        state = self._game_state()
+
+        name, score, bombs_left, _ = state["self"]
+        state["self"] = (name, score, bombs_left, (2, 3))
+
+        field = state["field"].copy()
+
+        # Remove existing crates from the test area if necessary.
+        field[field == 1] = 0
+
+        field[2, 3] = 0
+        field[5, 3] = 1
+        state["field"] = field
+
+        features = state_to_features(state, "f2")
+
+        expected = np.array([0.0, 0.0, 0.0, 1.0])
+        np.testing.assert_array_equal(features[16:20], expected)
+
+
+    def test_f2_crate_path_is_zero_when_no_crates_exists(self):
+        """Feature Test N: Verify that crate-path features remain zero when no crates exist."""
+        state = self._game_state()
+
+        field = state["field"].copy()
+        field[field == 1] = 0
+        state["field"] = field
+
+        features = state_to_features(state, "f2")
+
+        expected = np.zeros(4)
+        np.testing.assert_array_equal(features[16:20], expected)
+
+
+    def test_f2_detects_bomb_danger(self):
+        """Feature Test O: Verify that F2 marks the agent as endangered by a bomb."""
+        state = self._game_state()
+
+        state["self"] = ("player", 0, 0, (3, 3))
+        state["bombs"] = [((3, 5), 3)]
+
+        features = state_to_features(state, "f2")
+
+        self.assertEqual(features[20], 1.0)
+
+
+    def test_f2_escape_is_zero_when_not_in_bomb_danger(self):
+        """Feature Test P: Verify that escape features remain zero when the agent is safe."""
+        state = self._game_state()
+        state["bombs"] = []
+
+        features = state_to_features(state, "f2")
+
+        self.assertEqual(features[20], 0.0)
+
+        expected = np.zeros(4)
+        np.testing.assert_array_equal(features[21:25], expected)
+
+
+    def test_f2_escape_points_toward_safe_tile(self):
+        """Feature Test Q: Verify that F2 points toward a reachable safe tile when in bomb danger."""
+        state = self._game_state()
+
+        state["self"] = ("player", 0, 0, (3, 3))
+        state["bombs"] = [((3, 5), 3)]
+
+        # Block LEFT so RIGHT is the only immediate safe direction.
+        state["field"][2, 3] = -1
+
+        features = state_to_features(state, "f2")
+
+        expected = np.array([0.0, 0.0, 0.0, 1.0])
+        np.testing.assert_array_equal(features[21:25], expected)
+
+
+    def test_f2_wall_blocks_bomb_danger(self):
+        """Feature Test R: Verify that a wall blocks a bomb blast before it reaches the agent."""
+        state = self._game_state()
+
+        state["self"] = ("player", 0, 1, (3, 3))
+        state["bombs"] = [((3, 5), 3)]
+
+        # Wall between agent and bomb
+        state["field"][3, 4] = -1
+
+        features = state_to_features(state, "f2")
+
+        self.assertEqual(features[20], 0.0)
+
+
+    def test_f2_can_escape_while_standing_on_own_bomb(self):
+        """Feature Test S: Verify that an agent standing on its own bomb still gets an escape direction."""
+        state = self._game_state()
+
+        state["coins"] = []
+        state["self"] = ("player", 0, False, (1, 1))
+        state["bombs"] = [((1, 1), 3)]
+
+        # Force RIGHT as the escape route.
+        state["field"][1, 2] = -1
+
+        features = state_to_features(state, "f2")
+
+        self.assertEqual(features[20], 1.0)
+        self.assertEqual(features[24], 1.0) # RIGHT
+
+
     def test_predict_returns_one_value_per_action(self):
-        model = Linear_QModel(input_size=7, output_size=len(callbacks.ACTIONS), seed=1)
+        model = Linear_QModel(input_size=7, output_size=len(callbacks.actions_for_feature_mode("f0")), seed=1)
         features = np.ones(7)
 
         q_values = model.predict(features)
 
-        self.assertEqual(q_values.shape, (len(callbacks.ACTIONS),))
+        self.assertEqual(q_values.shape, (len(callbacks.actions_for_feature_mode("f0")),))
         self.assertTrue(np.isfinite(q_values).all())
 
 
@@ -176,6 +357,7 @@ class LinearQAgentTest(unittest.TestCase):
             model=Mock(),
             logger=Mock(),
             feature_mode="f1",
+            actions=callbacks.actions_for_feature_mode("f1"),
             rng=Mock()
         )
 
@@ -184,7 +366,7 @@ class LinearQAgentTest(unittest.TestCase):
         action = callbacks.act(agent, self._game_state())
 
         self.assertEqual(action, "WAIT")
-        agent.rng.choice.assert_called_once_with(callbacks.ACTIONS)
+        agent.rng.choice.assert_called_once_with(callbacks.actions_for_feature_mode("f1"))
         agent.model.predict.assert_not_called()
 
 
@@ -195,9 +377,10 @@ class LinearQAgentTest(unittest.TestCase):
             model=Mock(),
             logger=Mock(),
             feature_mode="f1",
+            actions=callbacks.actions_for_feature_mode("f1"),
             rng=Mock()
         )
-        agent.model.predict.return_value = np.array([1.0, 4.0, 2.0, 0.0, 3.0])
+        agent.model.predict.return_value = np.array([1.0, 2.0, 0.0, 4.0, 3.0])
 
         agent.rng.random.return_value = 0.9
         action = callbacks.act(agent, self._game_state())
@@ -359,6 +542,273 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertNotIn(train.MOVED_TOWARDS_COIN, events)
 
 
+    def test_basic_reward_includes_crate_destruction_and_coin_found(self):
+        """Reward Test G: Verify that basic reward values useful crate outcomes."""
+        agent = SimpleNamespace(logger=Mock())
+
+        events = [
+            game_events.CRATE_DESTROYED, # +2
+            game_events.COIN_FOUND, # +3
+        ]
+
+        agent.reward_mode = "basic"
+        reward = train.reward_from_events(agent, events)
+        
+        self.assertAlmostEqual(reward, 5)
+
+
+    def test_basic_reward_penalizes_self_kill(self):
+        """Reward Test H: Verify that basic reward strongly penalizes self-destruction."""
+        agent = SimpleNamespace(logger=Mock())
+
+        events = [
+            game_events.KILLED_SELF, # -20
+        ]
+
+        agent.reward_mode = "basic"
+        reward = train.reward_from_events(agent, events)
+        
+        self.assertAlmostEqual(reward, -20)
+
+
+    def test_sparse_reward_ignores_task2_auxiliary_events(self):
+        """Reward Test I: Verify that sparse mode ignores Task 2 auxiliary events."""
+        agent = SimpleNamespace(logger=Mock())
+
+        events = [
+            game_events.CRATE_DESTROYED, # +2
+            game_events.COIN_FOUND, # +3
+            game_events.KILLED_SELF, # -20
+        ]
+
+        agent.reward_mode = "sparse"
+        reward = train.reward_from_events(agent, events)
+        
+        self.assertAlmostEqual(reward, 0)
+
+
+    def test_basic_reward_does_not_double_penalize_self_kill(self):
+        """Reward Test J: Verify that self-destruction is not penalized twice."""
+        agent = SimpleNamespace(logger=Mock())
+
+        events = [
+            game_events.KILLED_SELF, # -20
+            game_events.GOT_KILLED,
+        ]
+
+        agent.reward_mode = "basic"
+        reward = train.reward_from_events(agent, events)
+        
+        self.assertAlmostEqual(reward, -20)
+
+
+    def test_f2_adds_escape_event_when_leaving_bomb_danger(self):
+        """Reward Test K: Verify that leaving bomb danger creates an escape event."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f2",
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        # Agent starts inside the bomb's blast line.
+        old_state["self"] = ("player", 0, False, (3, 3))
+        old_state["bombs"] = [((3, 5), 3)]
+
+        # Agent moves RIGHT to a safe tile.
+        new_state["self"] = ("player", 0, False, (4, 3))
+        new_state["bombs"] = [((3, 5), 2)]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertIn(train.ESCAPED_BOMB_DANGER, events)
+
+
+    def test_f2_does_not_add_escape_event_when_remaining_safe(self):
+        """Reward Test L: Verify that safe-to-safe movement does not create an escape event."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f2",
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["bombs"] = []
+        new_state["bombs"] = []
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, True, (4, 3))
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+            
+        self.assertNotIn(train.ESCAPED_BOMB_DANGER, events)
+
+
+    def test_shaped_reward_rewards_escaping_bomb_danger(self):
+        """Reward Test M: Verify that shaped mode rewards escaping bomb danger."""
+        agent = SimpleNamespace(logger=Mock())
+
+        events = [train.ESCAPED_BOMB_DANGER] # +3
+
+        agent.reward_mode = "shaped"
+        reward = train.reward_from_events(agent, events)
+        
+        self.assertAlmostEqual(reward, 3)
+
+
+    def test_f2_adds_towards_crate_event_for_recommended_move(self):
+        """Reward Test N: Verify that following the crate path creates a positive shaping event."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f2",
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        # Agent at (2, 3), crate at (5, 3): nearest bomb-placement tile is (4, 3), so RIGHT is recommended.
+        old_state["field"][5, 3] = 1
+        new_state["field"][5, 3] = 1
+
+        old_state["self"] = ("player", 0, True, (2, 3))
+        new_state["self"] = ("player", 0, True, (3, 3))
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+            
+        self.assertIn(train.MOVED_TOWARDS_CRATE, events)
+
+
+    def test_f2_adds_away_from_crate_event_for_wrong_move(self):
+        """Reward Test O: Verify that moving away from the crate path creates a penalty event."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f2",
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        # Agent at (2, 3), crate at (5, 3): nearest bomb-placement tile is (4, 3), so LEFT causes penalty.
+        old_state["field"][5, 3] = 1
+        new_state["field"][5, 3] = 1
+
+        old_state["self"] = ("player", 0, True, (2, 3))
+        new_state["self"] = ("player", 0, True, (1, 3))
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "LEFT", new_state, events)
+            
+        self.assertIn(train.MOVED_AWAY_FROM_CRATE, events)
+
+
+    def test_f2_does_not_shape_crate_navigation_while_in_bomb_danger(self):
+        """Reward Test P: Bomb escape takes priority over crate navigation."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f2",
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        # Crate to the RIGHT -> crate path recommends RIGHT.
+        old_state["field"][5, 3] = 1
+        new_state["field"][5, 3] = 1
+
+        # Agent is inside bomb danger.
+        old_state["self"] = ("player", 0, False, (3, 3))
+        old_state["bombs"] = [((3, 5), 3)]
+
+        # RIGHT also escapes the blast line.
+        new_state["self"] = ("player", 0, False, (4, 3))
+        new_state["bombs"] = [((3, 5), 2)]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertIn(train.ESCAPED_BOMB_DANGER, events)
+        self.assertNotIn(train.MOVED_TOWARDS_CRATE, events)
+        self.assertNotIn(train.MOVED_AWAY_FROM_CRATE, events)
+
+
+    def test_f2_does_not_shape_crate_navigation_when_coin_is_visible(self):
+        """Reward Test Q: Visible coin navigation takes priority over crate search."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f2",
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        # Crate path would recommend RIGHT.
+        old_state["field"][5, 3] = 1
+        new_state["field"][5, 3] = 1
+
+        old_state["self"] = ("player", 0, True, (2, 3))
+        new_state["self"] = ("player", 0, True, (3, 3))
+
+        # But a visible coin already exists.
+        old_state["coins"] = [(2, 1)]
+        new_state["coins"] = [(2, 1)]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertNotIn(train.MOVED_TOWARDS_CRATE, events)
+        self.assertNotIn(train.MOVED_AWAY_FROM_CRATE, events)
+
+
     def test_shortest_path_direction_right(self):
         """Path Test A: Test that a target directly to the right returns RIGHT as the valid first step."""
         state = self._game_state()
@@ -450,7 +900,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_model_start_mode_defaults_to_resume(self):
         """Model Start Test A: Test that the default model start mode is 'resume'."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.actions_for_feature_mode("f1")), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -488,7 +938,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_fresh_training_ignores_existing_checkpoint(self):
         """Model Start Test D: Test that fresh training ignores an existing checkpoint and initializes a new model."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.actions_for_feature_mode("f1")), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -506,7 +956,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_resume_training_loads_existing_checkpoint(self):
         """Model Start Test E: Test that resume training loads an existing checkpoint when available."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.actions_for_feature_mode("f1")), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -524,7 +974,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_evaluation_loads_checkpoint_independent_of_start_mode(self):
         """Model Start Test F: Test that evaluation loads the checkpoint regardless of the training start mode."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.actions_for_feature_mode("f1")), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -552,7 +1002,7 @@ class LinearQAgentTest(unittest.TestCase):
     def test_feature_mode_defaults_to_f1(self):
         """Feature Mode Test A: Test that the default feature mode is F1 with 11 features."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.actions_for_feature_mode("f1")), seed=1)
 
             with open("my-saved-model.pt", "wb") as file:
                 pickle.dump({"model": model, "epsilon": 0.25}, file)
@@ -617,7 +1067,7 @@ class LinearQAgentTest(unittest.TestCase):
         """Feature Mode Test G: Test that a checkpoint with a mismatched feature size raises a ValueError."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
             # F1 checkpoint: 11 inputs
-            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.ACTIONS), seed=1)
+            model = Linear_QModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.actions_for_feature_mode("f1")), seed=1)
 
             with open("my-saved-model.pt", "wb") as file:
                 pickle.dump({"model": model, "epsilon": 0.25}, file)
@@ -659,3 +1109,11 @@ class LinearQAgentTest(unittest.TestCase):
                 callbacks.setup(agent_b)
 
             self.assertFalse(np.allclose(agent_a.model.weights, agent_b.model.weights))
+
+
+    def test_task2_action_indices_match_action_space(self):
+        """Action Test A: Verify that Task 2 action indices match the model output order."""
+        actions = callbacks.actions_for_feature_mode("f2")
+
+        for index, action in enumerate(actions):
+            self.assertEqual(train.ACTION_TO_INDEX[action], index)
