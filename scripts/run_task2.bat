@@ -5,14 +5,14 @@ REM ============================================================
 REM Task 2 experiment runner
 REM
 REM Usage:
-REM   run_task2.bat <agent> <reward_mode> <experiment_seed>
+REM   run_task2.bat <agent> <feature_mode> <reward_mode> <experiment_seed>
 REM
 REM Examples:
-REM   run_task2.bat linear_q_agent basic 123
-REM   run_task2.bat sarsa_lambda_agent shaped 456
+REM   run_task2.bat linear_q_agent f2 shaped 123
+REM   run_task2.bat linear_q_agent f3 shaped 123
+REM   run_task2.bat sarsa_lambda_agent f2 basic 456
 REM
 REM Fixed settings:
-REM   FEATURE_MODE=f2
 REM   scenario=classic
 REM   train=600 rounds
 REM   eval=100 rounds
@@ -20,10 +20,10 @@ REM   eval seed=999
 REM ============================================================
 
 set "AGENT=%~1"
-set "REWARD_MODE=%~2"
-set "EXPERIMENT_SEED=%~3"
+set "FEATURE_MODE=%~2"
+set "REWARD_MODE=%~3"
+set "EXPERIMENT_SEED=%~4"
 
-set "FEATURE_MODE=f2"
 set "TRAIN_ROUNDS=600"
 set "EVAL_ROUNDS=100"
 set "EVAL_SEED=999"
@@ -34,28 +34,39 @@ REM ------------------------------------------------------------
 
 if "%AGENT%"=="" (
     echo ERROR: AGENT is missing.
-    echo Usage: run_task2.bat ^<agent^> ^<basic^|shaped^> ^<seed^>
+    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^> ^<basic^|shaped^> ^<seed^>
+    exit /b 1
+)
+
+if "%FEATURE_MODE%"=="" (
+    echo ERROR: FEATURE_MODE is missing.
+    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^> ^<basic^|shaped^> ^<seed^>
     exit /b 1
 )
 
 if "%REWARD_MODE%"=="" (
     echo ERROR: REWARD_MODE is missing.
-    echo Usage: run_task2.bat ^<agent^> ^<basic^|shaped^> ^<seed^>
+    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^> ^<basic^|shaped^> ^<seed^>
     exit /b 1
 )
 
 if "%EXPERIMENT_SEED%"=="" (
     echo ERROR: EXPERIMENT_SEED is missing.
-    echo Usage: run_task2.bat ^<agent^> ^<basic^|shaped^> ^<seed^>
+    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^> ^<basic^|shaped^> ^<seed^>
     exit /b 1
 )
 
 REM ------------------------------------------------------------
-REM Validate reward mode
+REM Validate feature / reward modes
 REM ------------------------------------------------------------
 
+if /I not "%FEATURE_MODE%"=="f2" if /I not "%FEATURE_MODE%"=="f3" (
+    echo ERROR: FEATURE_MODE must be f2 or f3 for Task 2 experiments.
+    exit /b 1
+)
+
 if /I not "%REWARD_MODE%"=="basic" if /I not "%REWARD_MODE%"=="shaped" (
-    echo ERROR: REWARD_MODE must be basic or shaped for the Task 2 comparison.
+    echo ERROR: REWARD_MODE must be basic or shaped for Task 2 experiments.
     exit /b 1
 )
 
