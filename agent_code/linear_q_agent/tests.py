@@ -525,6 +525,66 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertNotIn(train.MOVED_TOWARDS_COIN, events)
 
 
+    def test_basic_reward_includes_crate_destruction_and_coin_found(self):
+        """Reward Test G: Verify that basic reward values useful crate outcomes."""
+        agent = SimpleNamespace(logger=Mock())
+
+        events = [
+            game_events.CRATE_DESTROYED, # +2
+            game_events.COIN_FOUND, # +3
+        ]
+
+        agent.reward_mode = "basic"
+        reward = train.reward_from_events(agent, events)
+        
+        self.assertAlmostEqual(reward, 5)
+
+
+    def test_basic_reward_penalizes_self_kill(self):
+        """Reward Test H: Verify that basic reward strongly penalizes self-destruction."""
+        agent = SimpleNamespace(logger=Mock())
+
+        events = [
+            game_events.KILLED_SELF, # -20
+        ]
+
+        agent.reward_mode = "basic"
+        reward = train.reward_from_events(agent, events)
+        
+        self.assertAlmostEqual(reward, -20)
+
+
+    def test_sparse_reward_ignores_task2_auxiliary_events(self):
+        """Reward Test I: Verify that sparse mode ignores Task 2 auxiliary events."""
+        agent = SimpleNamespace(logger=Mock())
+
+        events = [
+            game_events.CRATE_DESTROYED, # +2
+            game_events.COIN_FOUND, # +3
+            game_events.KILLED_SELF, # -20
+        ]
+
+        agent.reward_mode = "sparse"
+        reward = train.reward_from_events(agent, events)
+        
+        self.assertAlmostEqual(reward, 0)
+
+
+    def test_basic_reward_does_not_double_penalize_self_kill(self):
+        """Reward Test J: Verify that self-destruction is not penalized twice."""
+        agent = SimpleNamespace(logger=Mock())
+
+        events = [
+            game_events.KILLED_SELF, # -20
+            game_events.GOT_KILLED,
+        ]
+
+        agent.reward_mode = "basic"
+        reward = train.reward_from_events(agent, events)
+        
+        self.assertAlmostEqual(reward, -20)
+
+
     def test_shortest_path_direction_right(self):
         """Path Test A: Test that a target directly to the right returns RIGHT as the valid first step."""
         state = self._game_state()
