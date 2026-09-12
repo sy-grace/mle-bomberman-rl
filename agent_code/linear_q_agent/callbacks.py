@@ -125,7 +125,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
         return None
 
     if feature_mode not in FEATURE_SIZES:
-        raise ValueError("feature_mode must be either 'f0' or 'f1'.")
+        raise ValueError("feature_mode must be one of 'f0', 'f1', or 'f2'.")
 
     # Get the current location of the agent
     field = game_state["field"] # np.ndarray
@@ -226,7 +226,8 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
         escape_field = field.copy()
 
         for (bomb_x, bomb_y), _timer in bombs:
-            escape_field[bomb_x, bomb_y] = -1
+            if (bomb_x, bomb_y) != agent[3]:
+                escape_field[bomb_x, bomb_y] = -1
 
         if features[20] == 1.0:
             features[21:25] = shortest_path_directions_to_any(escape_field, agent[3], safe_targets)

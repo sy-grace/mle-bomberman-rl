@@ -272,6 +272,23 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertEqual(features[20], 0.0)
 
 
+    def test_f2_can_escape_while_standing_on_own_bomb(self):
+        """Feature Test S: Verify that an agent standing on its own bomb still gets an escape direction."""
+        state = self._game_state()
+
+        state["coins"] = []
+        state["self"] = ("player", 0, False, (1, 1))
+        state["bombs"] = [((1, 1), 3)]
+
+        # Force RIGHT as the escape route.
+        state["field"][1, 2] = -1
+
+        features = state_to_features(state, "f2")
+
+        self.assertEqual(features[20], 1.0)
+        self.assertEqual(features[24], 1.0) # RIGHT
+
+
     def test_predict_returns_one_value_per_action(self):
         model = Linear_QModel(input_size=7, output_size=len(callbacks.actions_for_feature_mode("f0")), seed=1)
         features = np.ones(7)
