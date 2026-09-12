@@ -276,7 +276,7 @@ class LinearQAgentTest(unittest.TestCase):
         """Reward Test B: Test that the reward mode is read from the environment variable."""
         agent = SimpleNamespace(logger=Mock())
 
-        with patch.dict(os.environ, {"BOMBERMAN_REWARD_MODE": "sparse"}, clear=True):
+        with patch.dict(os.environ, {"REWARD_MODE": "sparse"}, clear=True):
             train.setup_training(agent)
 
         self.assertEqual(agent.reward_mode, "sparse")
@@ -286,7 +286,7 @@ class LinearQAgentTest(unittest.TestCase):
         """Reward Test C: Test that an invalid reward mode raises a ValueError."""
         agent = SimpleNamespace(logger=Mock())
 
-        with patch.dict(os.environ, {"BOMBERMAN_REWARD_MODE": "grape"}, clear=True):
+        with patch.dict(os.environ, {"REWARD_MODE": "grape"}, clear=True):
             with self.assertRaises(ValueError):
                 train.setup_training(agent)
 
