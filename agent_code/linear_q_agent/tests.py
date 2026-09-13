@@ -1283,9 +1283,6 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertNotIn(train.OSCILLATION, events)
 
 
-
-
-
     def test_shortest_path_direction_right(self):
         """Path Test A: Test that a target directly to the right returns RIGHT as the valid first step."""
         state = self._game_state()

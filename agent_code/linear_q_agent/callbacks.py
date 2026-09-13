@@ -49,7 +49,7 @@ def setup(self):
     self.feature_mode = os.getenv("FEATURE_MODE", "f1")
 
     if self.feature_mode not in FEATURE_SIZES:
-        raise ValueError("FEATURE_MODE must be one of 'f0', 'f1', 'f2', 'f3', 'f4', or 'f5.'")
+        raise ValueError("FEATURE_MODE must be one of 'f0', 'f1', 'f2', 'f3', 'f4', or 'f5'.")
 
     self.feature_size = FEATURE_SIZES[self.feature_mode]
     self.logger.info(f"Feature mode: {self.feature_mode} ({self.feature_size} features)")
@@ -82,6 +82,11 @@ def setup(self):
             # Support model-only files created before epsilon was persisted.
             self.model = checkpoint
             self.epsilon = EPSILON_START
+
+        saved_actions = checkpoint.get("actions") if isinstance(checkpoint, dict) else None
+
+        if saved_actions is not None and saved_actions != self.actions:
+            raise ValueError(f"Checkpoint action order {saved_actions} does not match current action order {self.actions}.")
 
         if self.model.input_size != self.feature_size:
             raise ValueError(f"Checkpoint expects {self.model.input_size} features, but FEATURE_MODE='{self.feature_mode}' uses {self.feature_size}.")
@@ -134,11 +139,11 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
         return None
 
     if feature_mode not in FEATURE_SIZES:
-        raise ValueError("feature_mode must be one of 'f0', 'f1', 'f2', 'f3', 'f4', or 'f5.'.")
+        raise ValueError("feature_mode must be one of 'f0', 'f1', 'f2', 'f3', 'f4', or 'f5'.")
 
     # Get the current location of the agent
     field = game_state["field"] # np.ndarray
-    # bombs = game_state["bombs"] # (x, y), timer
+    bombs = game_state["bombs"] # (x, y), timer
     coins = game_state["coins"] # x, y
     agent = game_state["self"] # name, score, bombs_left, (x, y)
 
@@ -221,7 +226,6 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
         features[16:20] = shortest_path_directions_to_any(field, agent[3], crate_targets)
 
         # 20: bomb_danger
-        bombs = game_state["bombs"]
         explosion_map = game_state.get("explosion_map")
 
         danger_tiles = bomb_danger_tiles(field, bombs, explosion_map)
@@ -259,7 +263,6 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
             index = previous_action_to_index.get(previous_action)
             if index is not None:
                 features[index] = 1.0
-
 
     # Return the final feature vector
     return features
@@ -321,7 +324,7 @@ def shortest_path_directions_to_any(field, start, targets):
             if not (0 <= nx < field.shape[0] and 0 <= ny < field.shape[1]):
                 continue
 
-            # Task 1: only free tiles are walkable
+            # Only free tiles are walkable
             if field[nx, ny] != 0:
                 continue
 
