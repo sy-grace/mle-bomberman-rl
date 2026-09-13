@@ -118,23 +118,27 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     self.logger.debug(f'Encountered game event(s) {", ".join(map(repr, events))} in step {new_game_state["step"]}')
 
     # state_to_features is defined in callbacks.py
-    state = state_to_features(old_game_state, self.feature_mode)
-    next_state = state_to_features(new_game_state, self.feature_mode)
+    if self.feature_mode in {"f5"}:
+        state = self.cached_features
+        next_state = state_to_features(new_game_state, self.feature_mode, previous_action=self_action)
+    else:
+        state = state_to_features(old_game_state, self.feature_mode)
+        next_state = state_to_features(new_game_state, self.feature_mode)
 
     # Custom event: safe and useful bomb placement
-    if self.feature_mode in {"f4"} and self_action == "BOMB" and state[26] == 1.0:
+    if self.feature_mode in {"f4", "f5"} and self_action == "BOMB" and state[26] == 1.0:
         events.append(SAFE_USEFUL_BOMB_DROPPED)
 
     # Bomb danger status
-    old_in_danger = self.feature_mode in {"f2", "f3", "f4"} and state[20] == 1.0
-    new_in_danger = self.feature_mode in {"f2", "f3", "f4"} and next_state[20]  == 1.0
+    old_in_danger = self.feature_mode in {"f2", "f3", "f4", "f5"} and state[20] == 1.0
+    new_in_danger = self.feature_mode in {"f2", "f3", "f4", "f5"} and next_state[20]  == 1.0
 
     # Custom event: escaped bomb danger
     if old_in_danger and not new_in_danger:
         events.append(ESCAPED_BOMB_DANGER)
 
     # Custom event: move along crate path
-    if self.feature_mode in {"f2", "f3", "f4"}:
+    if self.feature_mode in {"f2", "f3", "f4", "f5"}:
         crate_path = state[16:20]
 
         # Only search for crates when there is no visible coin and escaping a bomb is not currently more important.
@@ -226,7 +230,12 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
     :param self: The same object that is passed to all of the callbacks.
     """
     self.logger.debug(f'Encountered event(s) {", ".join(map(repr, events))} in final step')
-    state = state_to_features(last_game_state, self.feature_mode)
+
+    if self.feature_mode == "f5":
+        state = self.cached_features
+    else:
+        state = state_to_features(last_game_state, self.feature_mode)
+
     reward = reward_from_events(self, events)
     action = ACTION_TO_INDEX[last_action]
     self.model.update(state, action, reward, None)
@@ -237,6 +246,8 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
     self.last_action = None
     self.last_distance = None
     self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+    self.feature_previous_action = None
+    self.cached_features = None
 
     # Store the model
     with open("my-saved-model.pt", "wb") as file:

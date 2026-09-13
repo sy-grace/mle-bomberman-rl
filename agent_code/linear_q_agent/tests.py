@@ -518,6 +518,68 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertEqual(features[26], 0.0) # safe_and_useful_bomb
 
 
+    def test_f5_feature_vector_has_thirty_one_features(self):
+        """Feature Test AL: Verify that F5 produces a 31-dimensional feature vector."""
+        state = self._game_state()
+        features = state_to_features(state, "f5")
+        self.assertEqual(features.shape, (31,))
+
+
+    def test_f5_preserves_all_f4_features(self):
+        """Feature Test AM: F5 must preserve the complete F4 representation."""
+        state = self._game_state()
+
+        f4 = state_to_features(state, "f4")
+        f5 = state_to_features(state, "f5")
+
+        np.testing.assert_array_equal(f5[:27], f4)
+
+
+    def test_f5_uses_task2_action_space_with_bomb(self):
+        """Feature Test AN: F5 uses the six Task 2 actions."""
+        actions = callbacks.actions_for_feature_mode("f5")
+        expected = ["UP", "DOWN", "LEFT", "RIGHT", "WAIT", "BOMB"]
+        self.assertEqual(actions, expected)
+
+
+    def test_f5_fresh_model_uses_thirty_one_inputs_and_six_outputs(self):
+        """Feature Test AO: Fresh F5 training creates a 31-input, 6-action model."""
+        agent = SimpleNamespace(train=True, logger=Mock())
+
+        with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "FEATURE_MODE": "f5"}, clear=True):
+            callbacks.setup(agent)
+
+        self.assertEqual(agent.model.input_size, 31)
+        self.assertEqual(agent.model.output_size, 6)
+
+
+    def test_f5_encodes_previous_movement_action(self):
+        """Feature Test AP: F5 one-hot encodes the previous movement action."""
+        state = self._game_state()
+
+        expected_by_action = {
+            "UP": [1.0, 0.0, 0.0, 0.0],
+            "DOWN": [0.0, 1.0, 0.0, 0.0],
+            "LEFT": [0.0, 0.0, 1.0, 0.0],
+            "RIGHT": [0.0, 0.0, 0.0, 1.0],
+        }
+
+        for action, expected in expected_by_action.items():
+            with self.subTest(action=action):
+                features = state_to_features(state, "f5", previous_action=action)
+                np.testing.assert_array_equal(features[27:31], expected)
+
+
+    def test_f5_keeps_previous_action_features_zero_for_non_movement(self):
+        """Feature Test AQ: WAIT, BOMB, and no history do not activate movement-history features."""
+        state = self._game_state()
+
+        for action in [None, "WAIT", "BOMB"]:
+            with self.subTest(action=action):
+                features = state_to_features(state, "f5", previous_action=action)
+                np.testing.assert_array_equal(features[27:31], np.zeros(4))
+
+
     def test_predict_returns_one_value_per_action(self):
         model = Linear_QModel(input_size=7, output_size=len(callbacks.actions_for_feature_mode("f0")), seed=1)
         features = np.ones(7)
@@ -1411,3 +1473,108 @@ class LinearQAgentTest(unittest.TestCase):
 
         # Then: the crate should not be reachable by the blast
         assert not callbacks.bomb_would_destroy_crate(field, start)
+
+
+    def test_f5_act_caches_features_and_tracks_exploratory_action(self):
+        """F5 Cache Test A: Exploration must still update action history for the next state."""
+        agent = SimpleNamespace(
+            train=True,
+            epsilon=1.0,
+            model=Mock(),
+            logger=Mock(),
+            feature_mode="f5",
+            actions=callbacks.actions_for_feature_mode("f5"),
+            rng=Mock(),
+            feature_previous_action=None,
+            cached_features=None
+        )
+
+        agent.rng.random.return_value = 0.0
+        agent.rng.choice.side_effect = ["RIGHT", "LEFT"]
+
+        first_state = self._game_state()
+        first_action = callbacks.act(agent, first_state)
+
+        self.assertEqual(first_action, "RIGHT")
+        self.assertEqual(agent.feature_previous_action, "RIGHT")
+
+        second_state = self._game_state()
+        second_state["step"] = 2
+
+        second_action = callbacks.act(agent, second_state)
+
+        self.assertEqual(second_action, "LEFT")
+
+        # The cached state for step 2 must remember that step 1 used RIGHT.
+        np.testing.assert_array_equal(agent.cached_features[27:31], [0.0, 0.0, 0.0, 1.0])
+
+        # After choosing LEFT, LEFT becomes the history for the next state.
+        self.assertEqual(agent.feature_previous_action, "LEFT")
+
+        agent.model.predict.assert_not_called()
+
+
+    def test_f5_training_uses_cached_state_and_current_action_for_next_history(self):
+        """F5 Cache Test B: Training uses cached s_t and encodes a_t in s_(t+1)."""
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, True, (2, 3))
+        new_state["step"] = 2
+
+        cached_state = state_to_features(old_state, "f5", previous_action="RIGHT")
+
+        agent = SimpleNamespace(
+            model=Mock(), 
+            logger=Mock(), 
+            transitions=[], 
+            feature_mode="f5", 
+            cached_features=cached_state.copy(),
+            previous_action=None,
+            last_action=None
+        )
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "LEFT", new_state, [])
+
+        update_state, _, _, update_next_state = agent.model.update.call_args.args
+
+        # s_t is exactly the state cached during act().
+        np.testing.assert_array_equal(update_state, cached_state)
+        np.testing.assert_array_equal(update_state[27:31], [0.0, 0.0, 0.0, 1.0]) # previous action = RIGHT
+
+        # In s_(t+1), the action just taken becomes the previous action.
+        np.testing.assert_array_equal(update_next_state[27:31], [0.0, 0.0, 1.0, 0.0]) # current action = LEFT
+
+
+    def test_f5_terminal_update_uses_cached_state_and_resets_history(self):
+        """F5 Cache Test C: Terminal updates use the cached state and clear history."""
+        cached_state = state_to_features(self._game_state(), "f5", previous_action="DOWN")
+
+        agent = SimpleNamespace(
+            model=Mock(), 
+            logger=Mock(), 
+            epsilon=0.5,
+            epsilon_min=0.01,
+            epsilon_decay=0.99,
+            transitions=[], 
+            feature_mode="f5", 
+            cached_features=cached_state.copy(),
+            feature_previous_action="RIGHT",
+            previous_action="UP",
+            last_action="DOWN",
+            last_distance=1.0
+        )
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch("builtins.open"), patch.object(train.pickle, "dump"):
+            train.end_of_round(agent, self._game_state(), "LEFT", [])
+
+        update_state, _, _, update_next_state = agent.model.update.call_args.args
+
+        np.testing.assert_array_equal(update_state, cached_state)
+        self.assertIsNone(update_next_state)
+
+        self.assertIsNone(agent.cached_features)
+        self.assertIsNone(agent.feature_previous_action)

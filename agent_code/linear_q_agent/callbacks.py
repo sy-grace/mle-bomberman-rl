@@ -17,7 +17,7 @@ TASK1_ACTIONS = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'WAIT']
 TASK2_ACTIONS = TASK1_ACTIONS + ["BOMB"]
 
 EPSILON_START = 1.0
-FEATURE_SIZES = {"f0": 7, "f1": 11, "f2": 25, "f3": 26, "f4": 27}
+FEATURE_SIZES = {"f0": 7, "f1": 11, "f2": 25, "f3": 26, "f4": 27, "f5": 31}
 
 BOMB_POWER = 3
 BOMB_TIMER = 4
@@ -49,12 +49,15 @@ def setup(self):
     self.feature_mode = os.getenv("FEATURE_MODE", "f1")
 
     if self.feature_mode not in FEATURE_SIZES:
-        raise ValueError("FEATURE_MODE must be one of 'f0', 'f1', 'f2', 'f3', or 'f4'.")
+        raise ValueError("FEATURE_MODE must be one of 'f0', 'f1', 'f2', 'f3', 'f4', or 'f5.'")
 
     self.feature_size = FEATURE_SIZES[self.feature_mode]
     self.logger.info(f"Feature mode: {self.feature_mode} ({self.feature_size} features)")
 
     self.actions = actions_for_feature_mode(self.feature_mode)
+
+    self.feature_previous_action = None
+    self.cached_features = None
 
     # Check if file exists
     checkpoint_exists = os.path.isfile("my-saved-model.pt")
@@ -91,26 +94,31 @@ def act(self, game_state: dict) -> str:
     """
     Agent should parse the input, think, and take a decision.
     """
-    features = state_to_features(game_state, self.feature_mode)
+    if game_state["step"] == 1:
+        self.feature_previous_action = None
+        self.cached_features = None
+
+    features = state_to_features(game_state, self.feature_mode, previous_action=self.feature_previous_action)
+    self.cached_features = features.copy()
 
     # Exploration during training
     if self.train and self.rng.random() < self.epsilon:
         self.logger.debug("Choosing action purely at random.")
-        return self.rng.choice(self.actions)
+        action = self.rng.choice(self.actions)
+    else:
+        # Exploitation
+        q_values = self.model.predict(features)
 
-    # Exploitation
-    q_values = self.model.predict(features)
+        # Choose action with highest Q-value
+        action_index = int(np.argmax(q_values))
+        action = self.actions[action_index]
+        self.logger.debug("Choosing action with the highest Q-value.")
 
-    # Choose action with highest Q-value
-    action_index = int(np.argmax(q_values))
-    action = self.actions[action_index]
-
-    self.logger.debug("Choosing action with the highest Q-value.")
-
+    self.feature_previous_action = action
     return action
 
 
-def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
+def state_to_features(game_state: dict, feature_mode: str, previous_action=None) -> np.ndarray:
     """
     Converts the game state to a feature vector.
 
@@ -126,7 +134,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
         return None
 
     if feature_mode not in FEATURE_SIZES:
-        raise ValueError("feature_mode must be one of 'f0', 'f1', 'f2', 'f3', or 'f4'.")
+        raise ValueError("feature_mode must be one of 'f0', 'f1', 'f2', 'f3', 'f4', or 'f5.'.")
 
     # Get the current location of the agent
     field = game_state["field"] # np.ndarray
@@ -148,6 +156,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
     #           escape_U, escape_D, escape_L, escape_R]
     # F3: F2 + [safe_to_bomb]
     # F4: F3 + [safe_and_useful_bomb]
+    # F5: F4 + [previous_UP, previous_DOWN, previous_LEFT, previous_RIGHT]
     feature_size = FEATURE_SIZES[feature_mode]
     features = np.zeros(feature_size)
 
@@ -191,11 +200,11 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
                 closest_distance = manhattan_distance
                 closest_coin = coin
 
-        if closest_coin is not None and feature_mode in {"f1", "f2", "f3", "f4"}:
+        if closest_coin is not None and feature_mode in {"f1", "f2", "f3", "f4", "f5"}:
             path_directions = shortest_path_directions(field, agent[3], closest_coin)
             features[7:11] = path_directions
 
-    if feature_mode in {"f2", "f3", "f4"}:
+    if feature_mode in {"f2", "f3", "f4", "f5"}:
         # 11: bomb available
         features[11] = float(agent[2] > 0)
 
@@ -236,13 +245,21 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
             features[21:25] = shortest_path_directions_to_any(escape_field, agent[3], safe_targets)
 
         # 25: safe to bomb
-        if feature_mode in {"f3", "f4"}:
+        if feature_mode in {"f3", "f4", "f5"}:
             safe_to_bomb = bool(agent[2] and can_escape_after_bomb(field, agent[3], bombs, explosion_map))
             features[25] = float(safe_to_bomb)
 
         # 26: safe and useful bomb
-        if feature_mode in {"f4"}:
+        if feature_mode in {"f4", "f5"}:
             features[26] = float(safe_to_bomb and bomb_would_destroy_crate(field, agent[3]))
+
+        # 27:31: previous action [UP, DOWN, LEFT, RIGHT]
+        if feature_mode in {"f5"}:
+            previous_action_to_index = {"UP": 27, "DOWN": 28, "LEFT": 29, "RIGHT": 30}
+            index = previous_action_to_index.get(previous_action)
+            if index is not None:
+                features[index] = 1.0
+
 
     # Return the final feature vector
     return features
@@ -254,7 +271,7 @@ def shortest_path_directions(field, start, target):
 
 
 def actions_for_feature_mode(feature_mode):
-    if feature_mode in {"f2", "f3", "f4"}:
+    if feature_mode in {"f2", "f3", "f4", "f5"}:
         return TASK2_ACTIONS
     return TASK1_ACTIONS
 
