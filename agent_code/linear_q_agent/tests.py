@@ -417,6 +417,107 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertFalse(safe)
 
 
+    def test_f4_feature_vector_has_twenty_seven_features(self):
+        """Feature Test AD: Verify that F4 produces a 27-dimensional feature vector."""
+        state = self._game_state()
+        features = state_to_features(state, "f4")
+        self.assertEqual(features.shape, (27,))
+
+
+    def test_f4_preserves_all_f3_features(self):
+        """Feature Test AE: F4 must preserve the complete F3 representation."""
+        state = self._game_state()
+
+        f3 = state_to_features(state, "f3")
+        f4 = state_to_features(state, "f4")
+
+        np.testing.assert_array_equal(f4[:26], f3)
+
+
+    def test_f4_uses_task2_action_space_with_bomb(self):
+        """Feature Test AF: F4 uses the six Task 2 actions."""
+        actions = callbacks.actions_for_feature_mode("f4")
+        expected = ["UP", "DOWN", "LEFT", "RIGHT", "WAIT", "BOMB"]
+        self.assertEqual(actions, expected)
+
+
+    def test_f4_fresh_model_uses_twenty_seven_inputs_and_six_outputs(self):
+        """Feature Test AG: Fresh F4 training creates a 27-input, 6-action model."""
+        agent = SimpleNamespace(train=True, logger=Mock())
+
+        with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "FEATURE_MODE": "f4"}, clear=True):
+            callbacks.setup(agent)
+
+        self.assertEqual(agent.model.input_size, 27)
+        self.assertEqual(agent.model.output_size, 6)
+
+
+    def test_f4_marks_safe_and_useful_bomb_placement(self):
+        """Feature Test AH: F4 should activate the safe-and-useful feature for a survivable bomb that hits a crate."""
+        state = self._game_state()
+        state["self"] = ("player", 0, True, (3, 3))
+
+        # Crate is inside the bomb blast while other escape routes remain open.
+        state["field"][3, 2] = 1
+
+        features = state_to_features(state, "f4")
+
+        self.assertEqual(features[25], 1.0) # safe_to_bomb
+        self.assertEqual(features[26], 1.0) # safe_and_useful_bomb
+
+
+    def test_f4_keeps_useful_feature_zero_when_no_crate_is_in_range(self):
+        """Feature Test AI: F4 should mark a bomb as safe but not useful when no crate is within blast range."""
+        state = self._game_state()
+        state["self"] = ("player", 0, True, (3, 3))
+        state["coins"] = []
+
+        features = state_to_features(state, "f4")
+
+        self.assertEqual(features[25], 1.0) # safe_to_bomb
+        self.assertEqual(features[26], 0.0) # safe_and_useful_bomb
+
+
+    def test_f4_keeps_useful_feature_zero_when_bomb_is_unsafe(self):
+        """Feature Test AJ: F4 should not mark a bomb as safe and useful when the agent cannot escape."""
+        state = self._game_state()
+
+        field = np.full((7, 7), -1, dtype=int)
+        start = (3, 3)
+
+        # The only walkable route remains inside the hypothetical bomb blast.
+        field[3, 3] = 0
+        field[3, 2] = 0
+        field[3, 1] = 0
+
+        # The bomb would destroy this crate, but the agent cannot escape.
+        field[3, 4] = 1
+
+        state["field"] = field
+        state["self"] = ("player", 0, True, start)
+        state["coins"] = []
+        state["explosion_map"] = np.zeros((7, 7))
+
+        self.assertTrue(callbacks.bomb_would_destroy_crate(field, start))
+        
+        features = state_to_features(state, "f4")
+
+        self.assertEqual(features[25], 0.0) # safe_to_bomb
+        self.assertEqual(features[26], 0.0) # safe_and_useful_bomb
+
+
+    def test_f4_keeps_bomb_features_zero_when_bomb_is_unavailable(self):
+        """Feature Test AK: F4 should keep both bomb-placement features inactive when no bomb is available."""
+        state = self._game_state()
+        state["self"] = ("player", 0, False, (3, 3))
+        state["field"][3, 2] = 1
+
+        features = state_to_features(state, "f4")
+
+        self.assertEqual(features[25], 0.0) # safe_to_bomb
+        self.assertEqual(features[26], 0.0) # safe_and_useful_bomb
+
+
     def test_predict_returns_one_value_per_action(self):
         model = Linear_QModel(input_size=7, output_size=len(callbacks.actions_for_feature_mode("f0")), seed=1)
         features = np.ones(7)
