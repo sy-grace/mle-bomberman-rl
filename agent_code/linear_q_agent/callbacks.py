@@ -407,3 +407,25 @@ def can_escape_after_bomb(field, start, bombs, explosion_map=None):
             queue.append((next_pos, distance + 1))
 
     return False
+
+
+def bomb_would_destroy_crate(field, start):
+    """Return True if a bomb placed at start would hit at least one crate."""
+    start_x, start_y = start
+
+    for dx, dy in DIRECTIONS:
+        for distance in range(1, BOMB_POWER + 1):
+            nx = start_x + dx * distance
+            ny = start_y + dy * distance
+
+            if not (0 <= nx < field.shape[0] and 0 <= ny < field.shape[1]):
+                break
+
+            # Stone walls block the blast.
+            if field[nx, ny] == -1:
+                break
+
+            if field[nx, ny] == 1:
+                return True
+
+    return False
