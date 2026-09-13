@@ -52,7 +52,9 @@ SHAPING_EXTRA_REWARDS = {
 
     MOVED_TOWARDS_CRATE: +1,
     MOVED_AWAY_FROM_CRATE: -1,
-    SAFE_USEFUL_BOMB_DROPPED: +2
+    SAFE_USEFUL_BOMB_DROPPED: +2,
+
+    OSCILLATION: -0.5
 }
 
 REWARD_CONFIGS = {
@@ -186,29 +188,23 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     if not old_in_danger and self_action == "WAIT" and old_distance > 0:
         events.append(UNNECESSARILY_WAITED)
 
-    # Penalize oscillation
-    opposite = {
-        "UP": "DOWN",
-        "DOWN": "UP",
-        "LEFT": "RIGHT",
-        "RIGHT": "LEFT",
+    # Penalize immediate movement reversal in F5.
+    opposite_previous_feature = {
+        "UP": 28,       # previous DOWN
+        "DOWN": 27,     # previous UP
+        "LEFT": 30,     # previous RIGHT
+        "RIGHT": 29,    # previous LEFT
     }
 
-    previous_action = getattr(self, "previous_action", None)
-    last_action = getattr(self, "last_action", None)
+    opposite_index = opposite_previous_feature.get(self_action)
 
     if (
-        previous_action is not None
-        and last_action is not None
-        and self_action == previous_action
-        and last_action == opposite.get(self_action)
+        self.feature_mode in {"f5"}
+        and not old_in_danger
+        and opposite_index is not None
+        and state[opposite_index] == 1.0
     ):
         events.append(OSCILLATION)
-
-    # Update action history
-    self.previous_action = last_action
-    self.last_action = self_action
-    self.last_distance = old_distance
 
     # Model Learn
     reward = reward_from_events(self, events)
