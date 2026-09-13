@@ -809,7 +809,7 @@ class LinearQAgentTest(unittest.TestCase):
         
         self.assertEqual(reward_sparse, 0)
         self.assertEqual(reward_basic, 0)
-        self.assertEqual(reward_shaped, 0)
+        self.assertEqual(reward_shaped, -0.5)
 
 
     def test_coin_collection_skips_distance_shaping(self):
@@ -1098,6 +1098,192 @@ class LinearQAgentTest(unittest.TestCase):
 
         self.assertNotIn(train.MOVED_TOWARDS_CRATE, events)
         self.assertNotIn(train.MOVED_AWAY_FROM_CRATE, events)
+
+
+    def test_shaped_reward_penalizes_oscillation(self):
+        """Reward Test R: Only shaped reward assigns a penalty to oscillation."""
+        agent = SimpleNamespace(logger=Mock())
+
+        agent.reward_mode = "sparse"
+        self.assertAlmostEqual(train.reward_from_events(agent, [train.OSCILLATION]), 0.0)
+
+        agent.reward_mode = "basic"
+        self.assertAlmostEqual(train.reward_from_events(agent, [train.OSCILLATION]), 0.0)
+
+        agent.reward_mode = "shaped"
+        self.assertAlmostEqual(train.reward_from_events(agent, [train.OSCILLATION]), -0.5)
+
+
+    def test_f5_adds_oscillation_event_for_immediate_reversal(self):
+        """Reward Test S: F5 detects immediate reversal of the previous movement action."""
+        cases = [
+            ("DOWN", "UP", (3, 2)),
+            ("UP", "DOWN", (3, 4)),
+            ("RIGHT", "LEFT", (2, 3)),
+            ("LEFT", "RIGHT", (4, 3))
+        ]
+
+        for previous_action, current_action, new_position in cases:
+            with self.subTest(previous_action=previous_action, current_action=current_action):
+                old_state = self._game_state()
+                new_state = self._game_state()
+
+                old_state["coins"] = []
+                new_state["coins"] = []
+
+                old_state["self"] = ("player", 0, True, (3, 3))
+                new_state["self"] = ("player", 0, True, new_position) 
+                new_state["step"] = 2
+
+                cached_state = state_to_features(old_state, "f5", previous_action=previous_action)
+
+                agent = SimpleNamespace(
+                    model=Mock(),
+                    logger=Mock(),
+                    transitions=[],
+                    feature_mode="f5",
+                    cached_features=cached_state
+                )
+
+                events = []
+
+                with patch.object(train, "reward_from_events", return_value=0.0):
+                    train.game_events_occurred(agent, old_state, current_action, new_state, events)
+
+                self.assertIn(train.OSCILLATION, events)
+
+
+    def test_f5_does_not_add_oscillation_event_for_non_reversal(self):
+        """Reward Test T: F5 does not penalize movement that is not an immediate reversal."""
+        cases = [
+            ("RIGHT", "RIGHT", (4, 3)),
+            ("RIGHT", "UP", (3, 2)),
+            ("UP", "LEFT", (2, 3))
+        ]
+
+        for previous_action, current_action, new_position in cases:
+            with self.subTest(previous_action=previous_action, current_action=current_action):
+                old_state = self._game_state()
+                new_state = self._game_state()
+
+                old_state["coins"] = []
+                new_state["coins"] = []
+
+                old_state["self"] = ("player", 0, True, (3, 3))
+                new_state["self"] = ("player", 0, True, new_position) 
+                new_state["step"] = 2
+
+                cached_state = state_to_features(old_state, "f5", previous_action=previous_action)
+
+                agent = SimpleNamespace(
+                    model=Mock(),
+                    logger=Mock(),
+                    transitions=[],
+                    feature_mode="f5",
+                    cached_features=cached_state
+                )
+
+                events = []
+
+                with patch.object(train, "reward_from_events", return_value=0.0):
+                    train.game_events_occurred(agent, old_state, current_action, new_state, events)
+
+                self.assertNotIn(train.OSCILLATION, events)
+
+
+    def test_f5_does_not_add_oscillation_after_non_movement_action(self):
+        """Reward Test U: WAIT, BOMB, or no history cannot trigger movement reversal."""
+        for previous_action in [None, "WAIT", "BOMB"]:
+            with self.subTest(previous_action=previous_action):
+                old_state = self._game_state()
+                new_state = self._game_state()
+
+                old_state["coins"] = []
+                new_state["coins"] = []
+
+                old_state["self"] = ("player", 0, True, (3, 3))
+                new_state["self"] = ("player", 0, True, (3, 2)) 
+                new_state["step"] = 2
+
+                cached_state = state_to_features(old_state, "f5", previous_action=previous_action)
+
+                agent = SimpleNamespace(
+                    model=Mock(),
+                    logger=Mock(),
+                    transitions=[],
+                    feature_mode="f5",
+                    cached_features=cached_state
+                )
+
+                events = []
+
+                with patch.object(train, "reward_from_events", return_value=0.0):
+                    train.game_events_occurred(agent, old_state, "UP", new_state, events)
+
+                self.assertNotIn(train.OSCILLATION, events)
+
+
+    def test_f5_does_not_penalize_reversal_in_bomb_danger(self):
+        """Reward Test V: Emergency movement reversal is not penalized while escaping bomb danger."""
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["self"] = ("player", 0, False, (3, 3))
+        old_state["bombs"] = [((3, 5), 3)]
+
+        new_state["self"] = ("player", 0, False, (3, 2))
+        new_state["bombs"] = [((3, 5), 2)]
+        new_state["step"] = 2
+
+        cached_state = state_to_features(old_state, "f5", previous_action="DOWN")
+
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f5",
+            cached_features=cached_state
+        )
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "UP", new_state, events)
+
+        self.assertNotIn(train.OSCILLATION, events)
+
+
+    def test_f4_does_not_add_f5_oscillation_event(self):
+        """Reward Test W: F4 remains unaffected by F5 anti-oscillation shaping."""
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, True, (3, 2))
+        new_state["step"] = 2
+
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f4",
+        )
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "UP", new_state, events)
+
+        self.assertNotIn(train.OSCILLATION, events)
+
+
+
 
 
     def test_shortest_path_direction_right(self):
