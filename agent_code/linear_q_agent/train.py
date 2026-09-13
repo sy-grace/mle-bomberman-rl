@@ -29,6 +29,7 @@ ESCAPED_BOMB_DANGER = "ESCAPED_BOMB_DANGER"
 STAYED_IN_BOMB_DANGER = "STAYED_IN_BOMB_DANGER"
 MOVED_TOWARDS_CRATE = "MOVED_TOWARDS_CRATE"
 MOVED_AWAY_FROM_CRATE = "MOVED_AWAY_FROM_CRATE"
+SAFE_USEFUL_BOMB_DROPPED = "SAFE_USEFUL_BOMB_DROPPED"
 
 SPARSE_REWARDS = {
     e.COIN_COLLECTED: +10
@@ -45,11 +46,13 @@ SHAPING_EXTRA_REWARDS = {
     MOVED_TOWARDS_COIN: +1,
     MOVED_AWAY_FROM_COIN: -1,
     UNNECESSARILY_WAITED: -0.5,
+
     ESCAPED_BOMB_DANGER: +3,
     STAYED_IN_BOMB_DANGER: -2,
 
     MOVED_TOWARDS_CRATE: +1,
     MOVED_AWAY_FROM_CRATE: -1,
+    SAFE_USEFUL_BOMB_DROPPED: +2
 }
 
 REWARD_CONFIGS = {
@@ -118,16 +121,20 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     state = state_to_features(old_game_state, self.feature_mode)
     next_state = state_to_features(new_game_state, self.feature_mode)
 
+    # Custom event: safe and useful bomb placement
+    if self.feature_mode in {"f4"} and self_action == "BOMB" and state[26] == 1.0:
+        events.append(SAFE_USEFUL_BOMB_DROPPED)
+
     # Bomb danger status
-    old_in_danger = self.feature_mode in {"f2", "f3"} and state[20] == 1.0
-    new_in_danger = self.feature_mode in {"f2", "f3"} and next_state[20]  == 1.0
+    old_in_danger = self.feature_mode in {"f2", "f3", "f4"} and state[20] == 1.0
+    new_in_danger = self.feature_mode in {"f2", "f3", "f4"} and next_state[20]  == 1.0
 
     # Custom event: escaped bomb danger
     if old_in_danger and not new_in_danger:
         events.append(ESCAPED_BOMB_DANGER)
 
     # Custom event: move along crate path
-    if self.feature_mode in {"f2", "f3"}:
+    if self.feature_mode in {"f2", "f3", "f4"}:
         crate_path = state[16:20]
 
         # Only search for crates when there is no visible coin and escaping a bomb is not currently more important.

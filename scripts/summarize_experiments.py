@@ -37,10 +37,11 @@ TASK1_RUN_PATTERN = re.compile(
     r"^(f[01])_(sparse|basic|shaped)_seed(\d+)$"
 )
 
-# Task 2 currently uses F2. Supporting sparse here as well keeps the
-# summarizer useful if a sparse control experiment is added later.
+# Task 2 supports F2, F3, and F4 feature configurations.
+# Supporting sparse here as well keeps the summarizer useful
+# if a sparse control experiment is added later.
 TASK2_RUN_PATTERN = re.compile(
-    r"^(f[23])_(sparse|basic|shaped)_seed(\d+)$"
+    r"^(f[234])_(sparse|basic|shaped)_seed(\d+)$"
 )
 
 

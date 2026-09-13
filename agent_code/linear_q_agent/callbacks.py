@@ -17,7 +17,7 @@ TASK1_ACTIONS = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'WAIT']
 TASK2_ACTIONS = TASK1_ACTIONS + ["BOMB"]
 
 EPSILON_START = 1.0
-FEATURE_SIZES = {"f0": 7, "f1": 11, "f2": 25, "f3": 26}
+FEATURE_SIZES = {"f0": 7, "f1": 11, "f2": 25, "f3": 26, "f4": 27}
 
 BOMB_POWER = 3
 BOMB_TIMER = 4
@@ -49,7 +49,7 @@ def setup(self):
     self.feature_mode = os.getenv("FEATURE_MODE", "f1")
 
     if self.feature_mode not in FEATURE_SIZES:
-        raise ValueError("FEATURE_MODE must be one of 'f0', 'f1', 'f2', or 'f3'.")
+        raise ValueError("FEATURE_MODE must be one of 'f0', 'f1', 'f2', 'f3', or 'f4'.")
 
     self.feature_size = FEATURE_SIZES[self.feature_mode]
     self.logger.info(f"Feature mode: {self.feature_mode} ({self.feature_size} features)")
@@ -126,7 +126,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
         return None
 
     if feature_mode not in FEATURE_SIZES:
-        raise ValueError("feature_mode must be one of 'f0', 'f1', 'f2', or 'f3'.")
+        raise ValueError("feature_mode must be one of 'f0', 'f1', 'f2', 'f3', or 'f4'.")
 
     # Get the current location of the agent
     field = game_state["field"] # np.ndarray
@@ -147,6 +147,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
     #           in_bomb_danger, 
     #           escape_U, escape_D, escape_L, escape_R]
     # F3: F2 + [safe_to_bomb]
+    # F4: F3 + [safe_and_useful_bomb]
     feature_size = FEATURE_SIZES[feature_mode]
     features = np.zeros(feature_size)
 
@@ -190,11 +191,11 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
                 closest_distance = manhattan_distance
                 closest_coin = coin
 
-        if closest_coin is not None and feature_mode in {"f1", "f2", "f3"}:
+        if closest_coin is not None and feature_mode in {"f1", "f2", "f3", "f4"}:
             path_directions = shortest_path_directions(field, agent[3], closest_coin)
             features[7:11] = path_directions
 
-    if feature_mode in {"f2", "f3"}:
+    if feature_mode in {"f2", "f3", "f4"}:
         # 11: bomb available
         features[11] = float(agent[2] > 0)
 
@@ -235,8 +236,13 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
             features[21:25] = shortest_path_directions_to_any(escape_field, agent[3], safe_targets)
 
         # 25: safe to bomb
-        if feature_mode == "f3":
-            features[25] = float(agent[2] and can_escape_after_bomb(field, agent[3], bombs, explosion_map))
+        if feature_mode in {"f3", "f4"}:
+            safe_to_bomb = bool(agent[2] and can_escape_after_bomb(field, agent[3], bombs, explosion_map))
+            features[25] = float(safe_to_bomb)
+
+        # 26: safe and useful bomb
+        if feature_mode in {"f4"}:
+            features[26] = float(safe_to_bomb and bomb_would_destroy_crate(field, agent[3]))
 
     # Return the final feature vector
     return features
@@ -248,7 +254,7 @@ def shortest_path_directions(field, start, target):
 
 
 def actions_for_feature_mode(feature_mode):
-    if feature_mode in {"f2", "f3"}:
+    if feature_mode in {"f2", "f3", "f4"}:
         return TASK2_ACTIONS
     return TASK1_ACTIONS
 
@@ -405,5 +411,27 @@ def can_escape_after_bomb(field, start, bombs, explosion_map=None):
 
             visited.add(next_pos)
             queue.append((next_pos, distance + 1))
+
+    return False
+
+
+def bomb_would_destroy_crate(field, start):
+    """Return True if a bomb placed at start would hit at least one crate."""
+    start_x, start_y = start
+
+    for dx, dy in DIRECTIONS:
+        for distance in range(1, BOMB_POWER + 1):
+            nx = start_x + dx * distance
+            ny = start_y + dy * distance
+
+            if not (0 <= nx < field.shape[0] and 0 <= ny < field.shape[1]):
+                break
+
+            # Stone walls block the blast.
+            if field[nx, ny] == -1:
+                break
+
+            if field[nx, ny] == 1:
+                return True
 
     return False

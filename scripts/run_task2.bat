@@ -10,6 +10,7 @@ REM
 REM Examples:
 REM   run_task2.bat linear_q_agent f2 shaped 123
 REM   run_task2.bat linear_q_agent f3 shaped 123
+REM   run_task2.bat linear_q_agent f4 shaped 123
 REM   run_task2.bat sarsa_lambda_agent f2 basic 456
 REM
 REM Fixed settings:
@@ -34,25 +35,25 @@ REM ------------------------------------------------------------
 
 if "%AGENT%"=="" (
     echo ERROR: AGENT is missing.
-    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^> ^<basic^|shaped^> ^<seed^>
+    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^|f4^> ^<basic^|shaped^> ^<seed^>
     exit /b 1
 )
 
 if "%FEATURE_MODE%"=="" (
     echo ERROR: FEATURE_MODE is missing.
-    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^> ^<basic^|shaped^> ^<seed^>
+    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^|f4^> ^<basic^|shaped^> ^<seed^>
     exit /b 1
 )
 
 if "%REWARD_MODE%"=="" (
     echo ERROR: REWARD_MODE is missing.
-    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^> ^<basic^|shaped^> ^<seed^>
+    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^|f4^> ^<basic^|shaped^> ^<seed^>
     exit /b 1
 )
 
 if "%EXPERIMENT_SEED%"=="" (
     echo ERROR: EXPERIMENT_SEED is missing.
-    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^> ^<basic^|shaped^> ^<seed^>
+    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^|f4^> ^<basic^|shaped^> ^<seed^>
     exit /b 1
 )
 
@@ -60,8 +61,8 @@ REM ------------------------------------------------------------
 REM Validate feature / reward modes
 REM ------------------------------------------------------------
 
-if /I not "%FEATURE_MODE%"=="f2" if /I not "%FEATURE_MODE%"=="f3" (
-    echo ERROR: FEATURE_MODE must be f2 or f3 for Task 2 experiments.
+if /I not "%FEATURE_MODE%"=="f2" if /I not "%FEATURE_MODE%"=="f3" if /I not "%FEATURE_MODE%"=="f4" (
+    echo ERROR: FEATURE_MODE must be f2, f3 or f4 for Task 2 experiments.
     exit /b 1
 )
 
@@ -76,26 +77,19 @@ REM ------------------------------------------------------------
 
 set "RESULT_DIR=results\task2\%AGENT%\%FEATURE_MODE%_%REWARD_MODE%_seed%EXPERIMENT_SEED%"
 
-REM Refuse to overwrite an existing completed/partial experiment.
-if exist "%RESULT_DIR%\train.json" (
-    echo ERROR: Training results already exist:
-    echo   %RESULT_DIR%\train.json
-    echo Delete or rename the existing result directory before rerunning.
-    exit /b 1
-)
+REM Overwrite existing experiment artifacts.
+for %%F in ("train.json" "eval.json" "model.pt") do (
+    if exist "%RESULT_DIR%\%%~F" (
+        echo Removing existing file:
+        echo   %RESULT_DIR%\%%~F
+        del /Q "%RESULT_DIR%\%%~F"
 
-if exist "%RESULT_DIR%\eval.json" (
-    echo ERROR: Evaluation results already exist:
-    echo   %RESULT_DIR%\eval.json
-    echo Delete or rename the existing result directory before rerunning.
-    exit /b 1
-)
-
-if exist "%RESULT_DIR%\model.pt" (
-    echo ERROR: Saved model already exists:
-    echo   %RESULT_DIR%\model.pt
-    echo Delete or rename the existing result directory before rerunning.
-    exit /b 1
+        if exist "%RESULT_DIR%\%%~F" (
+            echo ERROR: Could not remove existing file:
+            echo   %RESULT_DIR%\%%~F
+            exit /b 1
+        )
+    )
 )
 
 if not exist "%RESULT_DIR%" (
