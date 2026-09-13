@@ -1245,3 +1245,68 @@ class LinearQAgentTest(unittest.TestCase):
 
         for index, action in enumerate(actions):
             self.assertEqual(train.ACTION_TO_INDEX[action], index)
+
+
+    def test_useful_bomb_detects_adjacent_crate(self):
+        """Useful Bomb Test A: Verify that an adjacent crate makes the bomb useful."""
+        # Given: a crate directly adjacent to the bomb position
+        field = np.zeros((11, 11), dtype=int)
+        field[0, :] = -1
+        field[-1, :] = -1
+        field[:, 0] = -1
+        field[:, -1] = -1
+
+        start = (5, 5)
+        field[5, 4] = 1
+
+        # Then: the bomb should be considered useful
+        assert callbacks.bomb_would_destroy_crate(field, start)
+
+
+    def test_useful_bomb_detects_crate_at_max_blast_range(self):
+        """Useful Bomb Test B: Verify that a crate at maximum blast range is detected."""
+        # Given: a crate exactly at the maximum blast distance
+        field = np.zeros((11, 11), dtype=int)
+        field[0, :] = -1
+        field[-1, :] = -1
+        field[:, 0] = -1
+        field[:, -1] = -1
+
+        start = (5, 5)
+        field[8, 5] = 1
+
+        # Then: the crate should still be detected
+        assert callbacks.bomb_would_destroy_crate(field, start)
+
+
+    def test_useful_bomb_ignores_crate_outside_blast_range(self):
+        """Useful Bomb Test C: Verify that crates outside the blast range are ignored."""
+        # Given: a crate beyond the bomb's blast range
+        field = np.zeros((11, 11), dtype=int)
+        field[0, :] = -1
+        field[-1, :] = -1
+        field[:, 0] = -1
+        field[:, -1] = -1
+
+        start = (5, 5)
+        field[9, 5] = 1
+
+        # Then: the bomb should not be considered useful
+        assert not callbacks.bomb_would_destroy_crate(field, start)
+
+
+    def test_useful_bomb_respects_stone_wall(self):
+        """Useful Bomb Test D: Verify that stone walls block blast detection."""
+        # Given: a stone wall blocking the path to a crate
+        field = np.zeros((11, 11), dtype=int)
+        field[0, :] = -1
+        field[-1, :] = -1
+        field[:, 0] = -1
+        field[:, -1] = -1
+
+        start = (5, 5)
+        field[6, 5] = -1
+        field[7, 5] = 1
+
+        # Then: the crate should not be reachable by the blast
+        assert not callbacks.bomb_would_destroy_crate(field, start)
