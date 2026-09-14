@@ -1318,7 +1318,153 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertNotIn(train.OSCILLATION, events)
 
 
+    def test_f6_adds_repeated_invalid_move_event(self):
+        """Reward Test X: F6 detects repeated invalid movement in the same direction."""
+        cases = [("UP", (3, 3)), ("DOWN", (3, 3)), ("LEFT", (3, 3)), ("RIGHT", (3, 3))]
 
+        for action, new_position in cases:
+            with self.subTest(action=action):
+                old_state = self._game_state()
+                new_state = self._game_state()
+
+                old_state["coins"] = []
+                new_state["coins"] = []
+
+                # The invalid movement leaves the agent at the same position.
+                old_state["self"] = ("player", 0, True, (3, 3))
+                new_state["self"] = ("player", 0, True, new_position)
+                new_state["step"] = 2
+
+                # Previous action was the same movement action.
+                cached_state = state_to_features(old_state, "f6", previous_action=action)
+
+                events = [game_events.INVALID_ACTION]
+
+                agent = SimpleNamespace(
+                    model=Mock(),
+                    logger=Mock(),
+                    transitions=[],
+                    feature_mode="f6",
+                    cached_features=cached_state
+                )
+
+                events = [game_events.INVALID_ACTION]
+
+                with patch.object(train, "reward_from_events", return_value=0.0):
+                    train.game_events_occurred(agent, old_state, action, new_state, events)
+
+                self.assertIn(train.REPEATED_INVALID_MOVE, events)
+
+                
+    def test_f6_does_not_add_repeated_invalid_move_for_different_previous_action(self):
+        """Reward Test Y: F6 does not flag an invalid move when the previous movement direction was different."""
+        cases = [("UP", "LEFT"), ("DOWN", "RIGHT"), ("LEFT", "UP"), ("RIGHT", "DOWN")]
+
+        for previous_action, current_action in cases:
+            with self.subTest(previous_action=previous_action, current_action=current_action):
+                old_state = self._game_state()
+                new_state = self._game_state()
+
+                old_state["coins"] = []
+                new_state["coins"] = []
+
+                old_state["self"] = ("player", 0, True, (3, 3))
+                new_state["self"] = ("player", 0, True, (3, 3))
+                new_state["step"] = 2
+
+                cached_state = state_to_features(old_state, "f6", previous_action=previous_action)
+
+                agent = SimpleNamespace(
+                    model=Mock(),
+                    logger=Mock(),
+                    transitions=[],
+                    feature_mode="f6",
+                    cached_features=cached_state
+                )
+
+                events = [game_events.INVALID_ACTION]
+
+                with patch.object(train, "reward_from_events", return_value=0.0):
+                    train.game_events_occurred(agent, old_state, current_action, new_state, events)
+
+                self.assertNotIn(train.REPEATED_INVALID_MOVE, events)
+
+
+    def test_f6_does_not_add_repeated_invalid_move_when_move_is_valid(self):
+        """Reward Test Z: F6 does not penalize repeated movement when the repeated action is valid."""
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, True, (4, 3))
+        new_state["step"] = 2
+
+        cached_state = state_to_features(old_state, "f6", previous_action="RIGHT")
+
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f6",
+            cached_features=cached_state
+        )
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertNotIn(train.REPEATED_INVALID_MOVE, events)
+        
+
+
+    def test_f5_does_not_add_f6_repeated_invalid_move_event(self):
+        """Reward Test AA: F5 remains unaffected by F6 repeated-invalid-move shaping."""
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, True, (3, 3))
+        new_state["step"] = 2
+
+        cached_state = state_to_features(old_state, "f5", previous_action="LEFT")
+
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f5",
+            cached_features=cached_state
+        )
+
+        events = [game_events.INVALID_ACTION]
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "LEFT", new_state, events)
+
+        self.assertNotIn(train.REPEATED_INVALID_MOVE, events)
+
+
+    def test_shaped_reward_penalizes_repeated_invalid_move(self):
+        """Reward Test AB: Only shaped reward assigns the additional repeated-invalid-move penalty."""
+        agent = SimpleNamespace(logger=Mock())
+
+        events = [game_events.INVALID_ACTION, train.REPEATED_INVALID_MOVE]
+
+        agent.reward_mode = "sparse"
+        self.assertAlmostEqual(train.reward_from_events(agent, events), 0.0)
+
+        agent.reward_mode = "basic"
+        self.assertAlmostEqual(train.reward_from_events(agent, events), -2.0)
+
+        agent.reward_mode = "shaped"
+        self.assertAlmostEqual(train.reward_from_events(agent, events), -3.0)
 
 
     def test_shortest_path_direction_right(self):

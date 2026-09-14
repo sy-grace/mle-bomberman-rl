@@ -24,6 +24,7 @@ MOVED_TOWARDS_COIN = "MOVED_TOWARDS_COIN"
 MOVED_AWAY_FROM_COIN = "MOVED_AWAY_FROM_COIN"
 UNNECESSARILY_WAITED = "UNNECESSARILY_WAITED"
 OSCILLATION = "OSCILLATION"
+REPEATED_INVALID_MOVE = "REPEATED_INVALID_MOVE"
 
 ESCAPED_BOMB_DANGER = "ESCAPED_BOMB_DANGER"
 MOVED_TOWARDS_CRATE = "MOVED_TOWARDS_CRATE"
@@ -52,7 +53,8 @@ SHAPING_EXTRA_REWARDS = {
     MOVED_AWAY_FROM_CRATE: -1,
     SAFE_USEFUL_BOMB_DROPPED: +2,
 
-    OSCILLATION: -0.5
+    OSCILLATION: -0.5,
+    REPEATED_INVALID_MOVE: -1.0
 }
 
 REWARD_CONFIGS = {
@@ -87,10 +89,6 @@ def setup_training(self):
     self.epsilon_min = EPSILON_MIN
     self.epsilon_decay = EPSILON_DECAY
 
-    # Movement tracking
-    self.last_action = None
-    self.previous_action = None
-
     # Reward configuration
     self.reward_mode = os.getenv("REWARD_MODE", "basic").lower()
 
@@ -98,6 +96,7 @@ def setup_training(self):
         raise ValueError(f"Invalid reward mode: {self.reward_mode}.\n Choose from {list(REWARD_CONFIGS.keys())}.")
 
     self.logger.info(f"Reward mode: {self.reward_mode}")
+
 
 def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_state: dict, events: List[str]):
     """
@@ -203,6 +202,14 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     ):
         events.append(OSCILLATION)
 
+    # Penalize repeating the same invalid movement action.
+    same_previous_feature = {"UP": 27, "DOWN": 28, "LEFT": 29, "RIGHT": 30}
+
+    same_index = same_previous_feature.get(self_action)
+
+    if self.feature_mode in {"f6"} and e.INVALID_ACTION in events and same_index is not None and state[same_index] == 1.0:
+        events.append(REPEATED_INVALID_MOVE)
+
     # Model Learn
     reward = reward_from_events(self, events)
     action = ACTION_TO_INDEX[self_action]
@@ -235,8 +242,6 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
     self.transitions.append(Transition(state, last_action, None, reward))
 
     # Reset each round
-    self.previous_action = None
-    self.last_action = None
     self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
     self.feature_previous_action = None
     self.cached_features = None
