@@ -260,7 +260,7 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
 
         escape_field = field.copy()
 
-        for (bomb_x, bomb_y), _timer in bombs:
+        for (bomb_x, bomb_y), _ in bombs:
             if (bomb_x, bomb_y) != agent[3]:
                 escape_field[bomb_x, bomb_y] = -1
 
@@ -376,7 +376,7 @@ def crate_placement_targets(field):
 def bomb_danger_tiles(field, bombs, explosion_map=None):
     danger_tiles = set()
 
-    for (bomb_x, bomb_y), _timer in bombs:
+    for (bomb_x, bomb_y), _ in bombs:
         danger_tiles.add((bomb_x, bomb_y))
 
         for dx, dy in DIRECTIONS:
@@ -403,7 +403,7 @@ def can_escape_after_bomb(field, start, bombs, explosion_map=None):
     """Return True if a bomb placed at start still allows escape within BOMB_TIMER moves."""
     hypothetical_bombs = list(bombs) + [(start, BOMB_TIMER)]
     danger_tiles = bomb_danger_tiles(field, hypothetical_bombs, explosion_map)
-    existing_bomb_tiles = {position for position, _timer in bombs}
+    existing_bomb_tiles = {position for position, _ in bombs}
 
     queue = deque([(start, 0)])
     visited = {start}
