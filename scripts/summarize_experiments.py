@@ -6,6 +6,7 @@
 #   python scripts/summarize_experiments.py --task 1 --agent linear_q_agent
 #   python scripts/summarize_experiments.py --task 1 --agent sarsa_lambda_agent
 #   python scripts/summarize_experiments.py --task 2 --agent linear_q_agent
+#   python scripts/summarize_experiments.py --task 2 --agent sarsa_lambda_agent
 
 import argparse
 import csv
@@ -63,6 +64,13 @@ TASK2_METRICS = [
     "eval_median_coins",
     "eval_self_kill_rate",
     "eval_avg_steps",
+
+    "eval_bombs_per_round",
+    "eval_crates_per_round",
+    "eval_crates_per_bomb",
+    "eval_coins_per_100_steps",
+    "eval_wait_rate",
+
     "completion_rate",
     "timeout_rate",
 ]
@@ -127,6 +135,18 @@ def safe_rate(count, total):
     if total == 0:
         return 0.0
     return count / total
+
+
+def single_agent_stats(stats):
+    """Return lifetime statistics for a single-agent experiment."""
+    by_agent = stats.get("by_agent", {})
+
+    if len(by_agent) != 1:
+        raise ValueError(
+            f"Expected exactly one agent, found {len(by_agent)}."
+        )
+
+    return next(iter(by_agent.values()))
 
 
 def analyze_task1_run(run_dir):
@@ -220,8 +240,11 @@ def analyze_task2_run(run_dir):
         print(f"Skipping incomplete run: {run_dir.name}")
         return None
 
-    train_rounds = extract_rounds(load_json(train_path))
-    eval_rounds = extract_rounds(load_json(eval_path))
+    train_stats = load_json(train_path)
+    eval_stats = load_json(eval_path)
+
+    train_rounds = extract_rounds(train_stats)
+    eval_rounds = extract_rounds(eval_stats)
 
     if not train_rounds or not eval_rounds:
         print(f"Skipping empty run: {run_dir.name}")
@@ -233,6 +256,26 @@ def analyze_task2_run(run_dir):
     final_train_coins = [row["coins"] for row in final_train_rounds]
     eval_coins = [row["coins"] for row in eval_rounds]
     eval_steps = [row["steps"] for row in eval_rounds]
+
+    eval_agent_stats = single_agent_stats(eval_stats)
+
+    eval_bombs = eval_agent_stats.get("bombs", 0)
+    eval_crates = eval_agent_stats.get("crates", 0)
+    eval_moves = eval_agent_stats.get("moves", 0)
+    eval_invalid = eval_agent_stats.get("invalid", 0)
+    eval_total_steps = eval_agent_stats.get("steps", 0)
+
+    eval_waits = (
+        eval_total_steps
+        - eval_moves
+        - eval_bombs
+        - eval_invalid
+    )
+
+    if eval_waits < 0:
+        raise ValueError(
+            f"Derived negative wait count in {run_dir.name}: {eval_waits}"
+        )
 
     train_self_kills = sum(row["suicides"] > 0 for row in train_rounds)
     final_train_self_kills = sum(
@@ -262,24 +305,20 @@ def analyze_task2_run(run_dir):
         "seed": int(seed),
         "train_avg_coins": mean(train_coins),
         "train_final100_avg_coins": mean(final_train_coins),
-        "train_self_kill_rate": safe_rate(
-            train_self_kills, len(train_rounds)
-        ),
-        "train_final100_self_kill_rate": safe_rate(
-            final_train_self_kills, len(final_train_rounds)
-        ),
+        "train_self_kill_rate": safe_rate( train_self_kills, len(train_rounds)),
+        "train_final100_self_kill_rate": safe_rate(final_train_self_kills, len(final_train_rounds)),
         "eval_avg_coins": mean(eval_coins),
         "eval_median_coins": median(eval_coins),
-        "eval_self_kill_rate": safe_rate(
-            eval_self_kills, len(eval_rounds)
-        ),
+        "eval_self_kill_rate": safe_rate(eval_self_kills, len(eval_rounds)),
         "eval_avg_steps": mean(eval_steps),
+        "eval_bombs_per_round": safe_rate(eval_bombs, len(eval_rounds)),
+        "eval_crates_per_round": safe_rate(eval_crates, len(eval_rounds)),
+        "eval_crates_per_bomb": safe_rate(eval_crates, eval_bombs),
+        "eval_coins_per_100_steps": (100.0 * safe_rate(sum(eval_coins), eval_total_steps)),
+        "eval_wait_rate": safe_rate(eval_waits, eval_total_steps),
         "completion_rate": safe_rate(len(completed), len(eval_rounds)),
         "timeout_rate": safe_rate(len(timed_out), len(eval_rounds)),
-        "completed_avg_steps": (
-            mean(completed_steps)
-            if completed_steps else None
-        ),
+        "completed_avg_steps": (mean(completed_steps) if completed_steps else None),
     }
 
 
@@ -451,6 +490,11 @@ def print_task2_run_table(results):
         "Eval steps",
         "Completion",
         "Timeout",
+        "Bombs/r",
+        "Crates/r",
+        "Crates/bomb",
+        "Coins/100",
+        "Wait rate",
     ]
 
     rows = []
@@ -470,6 +514,11 @@ def print_task2_run_table(results):
                 f'{result["eval_avg_steps"]:.1f}',
                 f'{100 * result["completion_rate"]:.1f}%',
                 f'{100 * result["timeout_rate"]:.1f}%',
+                f'{result["eval_bombs_per_round"]:.2f}',
+                f'{result["eval_crates_per_round"]:.2f}',
+                f'{result["eval_crates_per_bomb"]:.2f}',
+                f'{result["eval_coins_per_100_steps"]:.2f}',
+                f'{100 * result["eval_wait_rate"]:.1f}%',
             ]
         )
 
@@ -556,6 +605,11 @@ def print_task2_summary_table(summaries):
         "Eval steps",
         "Completion",
         "Timeout",
+        "Bombs/r",
+        "Crates/r",
+        "Crates/bomb",
+        "Coins/100",
+        "Wait rate",
     ]
 
     rows = []
@@ -607,6 +661,26 @@ def print_task2_summary_table(summaries):
                     decimals=1,
                     percent=True,
                 ),
+                format_mean_std(
+                    result["eval_bombs_per_round_mean"],
+                    result["eval_bombs_per_round_std"],
+                ),
+                format_mean_std(
+                    result["eval_crates_per_round_mean"],
+                    result["eval_crates_per_round_std"],
+                ),
+                format_mean_std(
+                    result["eval_crates_per_bomb_mean"],
+                    result["eval_crates_per_bomb_std"],
+                ),
+                format_mean_std(
+                    result["eval_coins_per_100_steps_mean"],
+                    result["eval_coins_per_100_steps_std"],
+                ),
+                format_mean_std(
+                    result["eval_wait_rate_mean"],
+                    result["eval_wait_rate_std"],
+                ),
             ]
         )
 
@@ -654,6 +728,11 @@ def run_fieldnames(task):
         "completion_rate",
         "timeout_rate",
         "completed_avg_steps",
+        "eval_bombs_per_round",
+        "eval_crates_per_round",
+        "eval_crates_per_bomb",
+        "eval_coins_per_100_steps",
+        "eval_wait_rate",
     ]
 
 
