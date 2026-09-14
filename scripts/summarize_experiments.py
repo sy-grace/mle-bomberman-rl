@@ -680,6 +680,8 @@ def print_task2_summary_table(summaries):
                 format_mean_std(
                     result["eval_wait_rate_mean"],
                     result["eval_wait_rate_std"],
+                    decimals=1,
+                    percent=True
                 ),
             ]
         )
