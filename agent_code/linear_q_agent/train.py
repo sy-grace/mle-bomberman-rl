@@ -48,7 +48,6 @@ SHAPING_EXTRA_REWARDS = {
     UNNECESSARILY_WAITED: -0.5,
 
     ESCAPED_BOMB_DANGER: +3,
-    STAYED_IN_BOMB_DANGER: -2,
 
     MOVED_TOWARDS_CRATE: +1,
     MOVED_AWAY_FROM_CRATE: -1,
@@ -75,7 +74,7 @@ ACTION_TO_INDEX = {
 
 def setup_training(self):
     """
-    Initialise self for training purpose.
+    Initialize self for training purpose.
 
     This is called after `setup` in callbacks.py.
 
@@ -101,6 +100,7 @@ def setup_training(self):
         raise ValueError(f"Invalid reward mode: {self.reward_mode}.\n Choose from {list(REWARD_CONFIGS.keys())}.")
 
     self.logger.info(f"Reward mode: {self.reward_mode}")
+
 
 def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_state: dict, events: List[str]):
     """
@@ -251,6 +251,7 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
             {
                 "model": self.model,
                 "epsilon": self.epsilon,
+                "feature_mode": self.feature_mode,
             },
             file,
         )
