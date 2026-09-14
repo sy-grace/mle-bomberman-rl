@@ -26,7 +26,6 @@ UNNECESSARILY_WAITED = "UNNECESSARILY_WAITED"
 OSCILLATION = "OSCILLATION"
 
 ESCAPED_BOMB_DANGER = "ESCAPED_BOMB_DANGER"
-STAYED_IN_BOMB_DANGER = "STAYED_IN_BOMB_DANGER"
 MOVED_TOWARDS_CRATE = "MOVED_TOWARDS_CRATE"
 MOVED_AWAY_FROM_CRATE = "MOVED_AWAY_FROM_CRATE"
 SAFE_USEFUL_BOMB_DROPPED = "SAFE_USEFUL_BOMB_DROPPED"
@@ -48,7 +47,6 @@ SHAPING_EXTRA_REWARDS = {
     UNNECESSARILY_WAITED: -0.5,
 
     ESCAPED_BOMB_DANGER: +3,
-    STAYED_IN_BOMB_DANGER: -2,
 
     MOVED_TOWARDS_CRATE: +1,
     MOVED_AWAY_FROM_CRATE: -1,
@@ -92,7 +90,6 @@ def setup_training(self):
     # Movement tracking
     self.last_action = None
     self.previous_action = None
-    self.last_distance = None
 
     # Reward configuration
     self.reward_mode = os.getenv("REWARD_MODE", "basic").lower()
@@ -240,7 +237,6 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
     # Reset each round
     self.previous_action = None
     self.last_action = None
-    self.last_distance = None
     self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
     self.feature_previous_action = None
     self.cached_features = None
