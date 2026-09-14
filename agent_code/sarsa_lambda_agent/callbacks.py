@@ -6,10 +6,21 @@ from collections import deque
 
 from .model import Linear_SARSAModel
 
+DIRECTIONS = [
+    (0, -1),    # UP
+    (0, 1),     # DOWN
+    (-1, 0),    # LEFT
+    (1, 0)      # RIGHT
+]
 
-ACTIONS = ['UP', 'RIGHT', 'DOWN', 'LEFT', 'WAIT']
+TASK1_ACTIONS = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'WAIT']
+TASK2_ACTIONS = TASK1_ACTIONS + ["BOMB"]
+
 EPSILON_START = 1.0
-FEATURE_SIZES = {"f0": 7, "f1": 11}
+FEATURE_SIZES = {"f0": 7, "f1": 11, "f2": 25, "f3": 26, "f4": 27, "f5": 31}
+
+BOMB_POWER = 3
+BOMB_TIMER = 4
 
 
 def setup(self):
@@ -39,10 +50,15 @@ def setup(self):
     self.feature_mode = os.getenv("FEATURE_MODE", "f1")
 
     if self.feature_mode not in FEATURE_SIZES:
-        raise ValueError("FEATURE_MODE must be either 'f0' or 'f1'.")
+        raise ValueError("FEATURE_MODE must be one of 'f0', 'f1', 'f2', 'f3', 'f4', or 'f5'.")
 
     self.feature_size = FEATURE_SIZES[self.feature_mode]
     self.logger.info(f"Feature mode: {self.feature_mode} ({self.feature_size} features)")
+
+    self.actions = actions_for_feature_mode(self.feature_mode)
+
+    self.feature_previous_action = None
+    self.cached_features = None
 
     # Check if file exists
     checkpoint_exists = os.path.isfile("my-saved-model.pt")
@@ -52,7 +68,7 @@ def setup(self):
         self.sarsa_lambda = float(os.getenv("SARSA_LAMBDA", "0.8"))
         self.logger.info(f"SARSA lambda: {self.sarsa_lambda}")
         self.logger.info("Setting up model from scratch.")
-        self.model = Linear_SARSAModel(input_size=self.feature_size, output_size=len(ACTIONS), seed=self.experiment_seed, lambda_=self.sarsa_lambda)
+        self.model = Linear_SARSAModel(input_size=self.feature_size, output_size=len(self.actions), seed=self.experiment_seed, lambda_=self.sarsa_lambda)
         self.epsilon = EPSILON_START
     else:
         if not checkpoint_exists:
@@ -70,22 +86,40 @@ def setup(self):
             self.model = checkpoint
             self.epsilon = EPSILON_START
 
+        saved_actions = checkpoint.get("actions") if isinstance(checkpoint, dict) else None
+
+        if saved_actions is not None and saved_actions != self.actions:
+            raise ValueError(f"Checkpoint action order {saved_actions} does not match current action order {self.actions}.")
+
         if self.model.input_size != self.feature_size:
             raise ValueError(f"Checkpoint expects {self.model.input_size} features, but FEATURE_MODE='{self.feature_mode}' uses {self.feature_size}.")
+
+        if self.model.output_size != len(self.actions):
+            raise ValueError(f"Checkpoint expects {self.model.output_size} actions, but FEATURE_MODE='{self.feature_mode}' uses {len(self.actions)}.")
 
 
 def act(self, game_state: dict) -> str:
     """Return the pending SARSA action or select a new action."""
+    if game_state["step"] == 1:
+        self.feature_previous_action = None
+        self.cached_features = None
+        self.pending_action = None
 
-    # Pending SARSA action
+    # Compute the features actually observed at this decision step.
+    features = state_to_features(game_state, self.feature_mode, previous_action=self.feature_previous_action)
+    self.cached_features = features.copy()
+
+    # Reuse the action already selected for the SARSA target.
     if self.train and getattr(self, "pending_action", None) is not None:
         action = self.pending_action
         self.pending_action = None
-        return action
+    else:
+        action = select_action(self, features)
 
-    # New action
-    features = state_to_features(game_state, self.feature_mode)
-    return select_action(self, features)
+    # Update action history only after deciding which action is actually executed.
+    self.feature_previous_action = action
+
+    return action
 
 
 def select_action(self, features: np.ndarray) -> str:
@@ -93,19 +127,22 @@ def select_action(self, features: np.ndarray) -> str:
     # Exploration during training
     if self.train and self.rng.random() < self.epsilon:
         self.logger.debug("Choosing action purely at random.")
-        return self.rng.choice(ACTIONS)
+        action = self.rng.choice(self.actions)
 
     # Exploitation
-    q_values = self.model.predict(features)
+    else:
+        q_values = self.model.predict(features)
 
-    # Choose action with the highest Q-value
-    action_index = int(np.argmax(q_values))
+        # Choose action with the highest Q-value
+        action_index = int(np.argmax(q_values))
+        action = self.actions[action_index]
 
-    self.logger.debug("choosing action with the highest Q-value.")
-    return ACTIONS[action_index]
+        self.logger.debug("choosing action with the highest Q-value.")
+
+    return action
 
 
-def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
+def state_to_features(game_state: dict, feature_mode: str, previous_action=None) -> np.ndarray:
     """
     Converts the game state to the input of model, i.e. a feature vector.
 
@@ -121,11 +158,11 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
         return None
 
     if feature_mode not in FEATURE_SIZES:
-        raise ValueError("feature_mode must be either 'f0' or 'f1'.")
+        raise ValueError("feature_mode must be one of 'f0', 'f1', 'f2', 'f3', 'f4', or 'f5'.")
 
     # Get the current location of the agent
     field = game_state["field"] # np.ndarray
-    # bombs = game_state["bombs"] # (x, y), timer
+    bombs = game_state["bombs"] # (x, y), timer
     coins = game_state["coins"] # x, y
     agent = game_state["self"] # name, score, bombs_left, (x, y)
 
@@ -136,6 +173,14 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
     # Create a feature vector
     # F0: [1, free_U, free_D, free_L, free_R, coin_dx, coin_dy]
     # F1: F0 + [path_U, path_D, path_L, path_R]
+    # F2: F1 + [bomb_available, 
+    #           adjacent_crate_U, adjacent_crate_D, adjacent_crate_L, adjacent_crate_R, 
+    #           crate_path_U, crate_path_D, crate_path_L, crate_path_R, 
+    #           in_bomb_danger, 
+    #           escape_U, escape_D, escape_L, escape_R]
+    # F3: F2 + [safe_to_bomb]
+    # F4: F3 + [safe_and_useful_bomb]
+    # F5: F4 + [previous_UP, previous_DOWN, previous_LEFT, previous_RIGHT]
     feature_size = FEATURE_SIZES[feature_mode]
     features = np.zeros(feature_size)
 
@@ -179,46 +224,108 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
                 closest_distance = manhattan_distance
                 closest_coin = coin
 
-        if closest_coin is not None and feature_mode == 'f1':
+        if closest_coin is not None and feature_mode in {"f1", "f2", "f3", "f4", "f5"}:
             path_directions = shortest_path_directions(field, agent[3], closest_coin)
             features[7:11] = path_directions
+
+    if feature_mode in {"f2", "f3", "f4", "f5"}:
+        # 11: bomb available
+        features[11] = float(agent[2] > 0)
+
+        # 12:16: adjacent crates [UP, DOWN, LEFT, RIGHT]
+        for i, (dx, dy) in enumerate(DIRECTIONS):
+            nx = agent_x + dx
+            ny = agent_y + dy
+
+            if field[nx, ny] == 1:
+                features[12 + i] = 1.0
+
+        # 16:20: path to crates [UP, DOWN, LEFT, RIGHT]
+        crate_targets = crate_placement_targets(field)
+        features[16:20] = shortest_path_directions_to_any(field, agent[3], crate_targets)
+
+        # 20: bomb_danger
+        explosion_map = game_state.get("explosion_map")
+
+        danger_tiles = bomb_danger_tiles(field, bombs, explosion_map)
+        features[20] = float(agent[3] in danger_tiles)
+
+        # 21:25: escape direction [UP, DOWN, LEFT, RIGHT]
+        safe_targets = set()
+
+        for x in range(field.shape[0]):
+            for y in range(field.shape[1]):
+                if field[x, y] == 0 and (x, y) not in danger_tiles:
+                    safe_targets.add((x, y))
+
+        escape_field = field.copy()
+
+        for (bomb_x, bomb_y), _ in bombs:
+            if (bomb_x, bomb_y) != agent[3]:
+                escape_field[bomb_x, bomb_y] = -1
+
+        if features[20] == 1.0:
+            features[21:25] = shortest_path_directions_to_any(escape_field, agent[3], safe_targets)
+
+        # 25: safe to bomb
+        if feature_mode in {"f3", "f4", "f5"}:
+            safe_to_bomb = bool(agent[2] and can_escape_after_bomb(field, agent[3], bombs, explosion_map))
+            features[25] = float(safe_to_bomb)
+
+        # 26: safe and useful bomb
+        if feature_mode in {"f4", "f5"}:
+            features[26] = float(safe_to_bomb and bomb_would_destroy_crate(field, agent[3]))
+
+        # 27:31: previous action [UP, DOWN, LEFT, RIGHT]
+        if feature_mode in {"f5"}:
+            previous_action_to_index = {"UP": 27, "DOWN": 28, "LEFT": 29, "RIGHT": 30}
+            index = previous_action_to_index.get(previous_action)
+            if index is not None:
+                features[index] = 1.0
 
     # Return the final feature vector
     return features
 
 
+def actions_for_feature_mode(feature_mode):
+    if feature_mode in {"f2", "f3", "f4", "f5"}:
+        return TASK2_ACTIONS
+    return TASK1_ACTIONS
+
+
 def shortest_path_directions(field, start, target):
     """Return valid first-step directions along shortest paths from start to target."""
+    return shortest_path_directions_to_any(field, start, {target})
 
-    directions = [
-        (0, -1),    # UP
-        (0, 1),     # DOWN
-        (-1, 0),    # LEFT
-        (1, 0)      # RIGHT
-    ]
+
+def shortest_path_directions_to_any(field, start, targets):
 
     # No movement needed if already at target
-    if start == target:
+    if not targets:
         return np.zeros(4)
 
+    if start in targets:
+        return np.zeros(4)
     # Distance from each tile to the target
     distances = np.full(field.shape, -1)
+    queue = deque()
 
-    queue = deque([target])
-    distances[target] = 0
+    for target in targets:
+        distances[target] = 0
+        queue.append(target)
 
     # BFS starting from the target
     while queue:
         x, y = queue.popleft()
 
-        for dx, dy in directions:
+        for dx, dy in DIRECTIONS:
             nx, ny = x + dx, y + dy
 
             # Check field boundaries
             if not (0 <= nx < field.shape[0] and 0 <= ny < field.shape[1]):
                 continue
 
-            # Task 1: only free tiles are walkable
+            # Only free tiles are walkable
             if field[nx, ny] != 0:
                 continue
 
@@ -237,7 +344,7 @@ def shortest_path_directions(field, start, target):
     path_directions = np.zeros(4)
 
     # Check which neighboring tiles reduce the shortest-path distance by 1
-    for i, (dx, dy) in enumerate(directions):
+    for i, (dx, dy) in enumerate(DIRECTIONS):
         nx = start[0] + dx
         ny = start[1] + dy
 
@@ -248,3 +355,120 @@ def shortest_path_directions(field, start, target):
             path_directions[i] = 1
 
     return path_directions
+
+
+def crate_placement_targets(field):
+    targets = set()
+
+    crate_positions = np.argwhere(field == 1)
+
+    for crate_x, crate_y in crate_positions:
+        for dx, dy in DIRECTIONS:
+            nx = crate_x + dx
+            ny = crate_y + dy
+
+            if 0 <= nx < field.shape[0] and 0 <= ny < field.shape[1] and field[nx, ny] == 0:
+                targets.add((nx, ny))
+
+    return targets
+
+
+def bomb_danger_tiles(field, bombs, explosion_map=None):
+    danger_tiles = set()
+
+    for (bomb_x, bomb_y), _ in bombs:
+        danger_tiles.add((bomb_x, bomb_y))
+
+        for dx, dy in DIRECTIONS:
+            for distance in range(1, BOMB_POWER + 1):
+                nx = bomb_x + dx * distance
+                ny = bomb_y + dy * distance
+
+                if not (0 <= nx < field.shape[0] and 0 <= ny < field.shape[1]):
+                    break
+
+                if field[nx, ny] == -1:
+                    break
+
+                danger_tiles.add((nx, ny))
+
+    if explosion_map is not None:
+        xs, ys = np.where(explosion_map > 0)
+        danger_tiles.update(zip(xs, ys))
+
+    return danger_tiles
+
+
+def can_escape_after_bomb(field, start, bombs, explosion_map=None):
+    """Return True if a bomb placed at start still allows escape within BOMB_TIMER moves."""
+    hypothetical_bombs = list(bombs) + [(start, BOMB_TIMER)]
+    danger_tiles = bomb_danger_tiles(field, hypothetical_bombs, explosion_map)
+    existing_bomb_tiles = {position for position, _ in bombs}
+
+    queue = deque([(start, 0)])
+    visited = {start}
+
+    while queue:
+        (x, y), distance = queue.popleft()
+
+        # We found a tile outside the future blast zone.
+        if distance > 0 and (x, y) not in danger_tiles:
+            return True
+
+        # No more movement possible before explosion.
+        if distance >= BOMB_TIMER:
+            continue
+
+        for dx, dy in DIRECTIONS:
+            nx = x + dx
+            ny = y + dy
+            next_pos = (nx, ny)
+
+            if not (0 <= nx < field.shape[0] and 0 <= ny < field.shape[1]):
+                continue
+
+            # Walls and crates are not walkable.
+            if field[nx, ny] != 0:
+                continue
+
+            # Existing bombs are obstacles.
+            if next_pos in existing_bomb_tiles:
+                continue
+
+            # After leaving the newly placed bomb tile, the agent cannot walk back onto it.
+            if next_pos == start:
+                continue
+
+            # Never walk through an active explosion.
+            if explosion_map is not None and explosion_map[nx, ny] > 0:
+                continue
+
+            if next_pos in visited:
+                continue
+
+            visited.add(next_pos)
+            queue.append((next_pos, distance + 1))
+
+    return False
+
+
+def bomb_would_destroy_crate(field, start):
+    """Return True if a bomb placed at start would hit at least one crate."""
+    start_x, start_y = start
+
+    for dx, dy in DIRECTIONS:
+        for distance in range(1, BOMB_POWER + 1):
+            nx = start_x + dx * distance
+            ny = start_y + dy * distance
+
+            if not (0 <= nx < field.shape[0] and 0 <= ny < field.shape[1]):
+                break
+
+            # Stone walls block the blast.
+            if field[nx, ny] == -1:
+                break
+
+            if field[nx, ny] == 1:
+                return True
+
+    return False

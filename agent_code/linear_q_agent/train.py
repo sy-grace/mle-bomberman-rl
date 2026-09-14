@@ -75,7 +75,7 @@ ACTION_TO_INDEX = {
 
 def setup_training(self):
     """
-    Initialise self for training purpose.
+    Initialize self for training purpose.
 
     This is called after `setup` in callbacks.py.
 
@@ -252,6 +252,7 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
             {
                 "model": self.model,
                 "epsilon": self.epsilon,
+                "feature_mode": self.feature_mode,
             },
             file,
         )
