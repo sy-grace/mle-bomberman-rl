@@ -58,6 +58,7 @@ def setup(self):
 
     self.feature_previous_action = None
     self.cached_features = None
+    self.recent_positions = deque(maxlen=12)
 
     # Check if file exists
     checkpoint_exists = os.path.isfile("my-saved-model.pt")
@@ -102,9 +103,15 @@ def act(self, game_state: dict) -> str:
     if game_state["step"] == 1:
         self.feature_previous_action = None
         self.cached_features = None
+        if hasattr(self, "recent_positions"):
+            self.recent_positions.clear()
 
     features = state_to_features(game_state, self.feature_mode, previous_action=self.feature_previous_action)
     self.cached_features = features.copy()
+    position = tuple(game_state["self"][3])
+    if not hasattr(self, "recent_positions"):
+        self.recent_positions = deque(maxlen=12)
+    self.recent_positions.append(position)
 
     # Exploration during training
     if self.train and self.rng.random() < self.epsilon:
@@ -114,13 +121,97 @@ def act(self, game_state: dict) -> str:
         # Exploitation
         q_values = self.model.predict(features)
 
-        # Choose action with highest Q-value
-        action_index = int(np.argmax(q_values))
+        # F6 can reject actions that are known to be invalid or counterproductive
+        # even when an old checkpoint assigns them a high Q-value.
+        allowed_actions = action_candidates(
+            features,
+            self.actions,
+            self.feature_mode,
+            position=position,
+            recent_positions=self.recent_positions,
+        )
+        masked_q_values = np.full_like(q_values, -np.inf, dtype=float)
+        for action in allowed_actions:
+            masked_q_values[self.actions.index(action)] = q_values[self.actions.index(action)]
+
+        # Choose the highest-Q action among the safe candidates.
+        action_index = int(np.argmax(masked_q_values))
         action = self.actions[action_index]
         self.logger.debug("Choosing action with the highest Q-value.")
 
     self.feature_previous_action = action
     return action
+
+
+def action_candidates(
+    features: np.ndarray,
+    actions,
+    feature_mode: str,
+    position=None,
+    recent_positions=(),
+):
+    """Return actions that are valid and sensible for the current F6 state."""
+    if feature_mode != "f6":
+        return actions
+
+    candidates = list(actions)
+    in_danger = features[20] == 1.0
+
+    # A bomb is useful only when F6's safety and crate-yield calculation found
+    # a reachable escape and at least one crate in the blast area.
+    if features[31] <= 0.0 and "BOMB" in candidates:
+        candidates.remove("BOMB")
+
+    # Never deliberately choose a blocked movement. Keep WAIT as a fallback.
+    movement_features = {
+        "UP": 1,
+        "DOWN": 2,
+        "LEFT": 3,
+        "RIGHT": 4,
+    }
+    candidates = [
+        action for action in candidates
+        if action not in movement_features or features[movement_features[action]] == 1.0
+    ]
+
+    # Outside bomb danger, avoid an immediate reversal when another action is
+    # available. In danger, the escape policy must be allowed to reverse.
+    if not in_danger:
+        opposite = {"UP": "DOWN", "DOWN": "UP", "LEFT": "RIGHT", "RIGHT": "LEFT"}
+        previous_action = next(
+            (action for action, index in {
+                "UP": 27, "DOWN": 28, "LEFT": 29, "RIGHT": 30
+            }.items() if features[index] == 1.0),
+            None,
+        )
+        reverse = opposite.get(previous_action)
+        alternative_movement_exists = any(
+            action != reverse and action in movement_features
+            for action in candidates
+        )
+        if reverse in candidates and alternative_movement_exists:
+            candidates.remove(reverse)
+
+    # Avoid short position cycles such as UP-RIGHT-DOWN-LEFT. Do not apply
+    # this while escaping, and keep the valid candidates as a fallback when
+    # every available tile has recently been visited.
+    if not in_danger and position is not None:
+        offsets = {
+            "UP": (0, -1),
+            "DOWN": (0, 1),
+            "LEFT": (-1, 0),
+            "RIGHT": (1, 0),
+        }
+        visited = set(recent_positions)
+        fresh_candidates = [
+            action for action in candidates
+            if action not in offsets
+            or (position[0] + offsets[action][0], position[1] + offsets[action][1]) not in visited
+        ]
+        if any(action in movement_features for action in fresh_candidates):
+            candidates = fresh_candidates
+
+    return candidates or list(actions)
 
 
 def state_to_features(game_state: dict, feature_mode: str, previous_action=None) -> np.ndarray:
