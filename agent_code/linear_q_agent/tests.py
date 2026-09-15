@@ -580,6 +580,41 @@ class LinearQAgentTest(unittest.TestCase):
                 np.testing.assert_array_equal(features[27:31], np.zeros(4))
 
 
+    def test_f6_feature_vector_has_thirty_two_features(self):
+        """Feature Test AR: Verify that F6 produces a 32-dimensional feature vector."""
+        state = self._game_state()
+        features = state_to_features(state, "f6")
+        self.assertEqual(features.shape, (32,))
+
+
+    def test_f6_preserves_all_f5_features(self):
+        """Feature Test AS: F6 must preserve the complete F5 representation."""
+        state = self._game_state()
+
+        f5 = state_to_features(state, "f5")
+        f6 = state_to_features(state, "f6")
+
+        np.testing.assert_array_equal(f6[:31], f5)
+
+
+    def test_f6_uses_task2_action_space_with_bomb(self):
+        """Feature Test AT: F6 uses the six Task 2 actions."""
+        actions = callbacks.actions_for_feature_mode("f6")
+        expected = ["UP", "DOWN", "LEFT", "RIGHT", "WAIT", "BOMB"]
+        self.assertEqual(actions, expected)
+
+
+    def test_f6_fresh_model_uses_thirty_two_inputs_and_six_outputs(self):
+        """Feature Test AU: Fresh F6 training creates a 32-input, 6-action model."""
+        agent = SimpleNamespace(train=True, logger=Mock())
+
+        with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "FEATURE_MODE": "f6"}, clear=True):
+            callbacks.setup(agent)
+
+        self.assertEqual(agent.model.input_size, 32)
+        self.assertEqual(agent.model.output_size, 6)
+
+
     def test_predict_returns_one_value_per_action(self):
         model = Linear_QModel(input_size=7, output_size=len(callbacks.actions_for_feature_mode("f0")), seed=1)
         features = np.ones(7)
@@ -1283,6 +1318,155 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertNotIn(train.OSCILLATION, events)
 
 
+    def test_f6_adds_repeated_invalid_move_event(self):
+        """Reward Test X: F6 detects repeated invalid movement in the same direction."""
+        cases = [("UP", (3, 3)), ("DOWN", (3, 3)), ("LEFT", (3, 3)), ("RIGHT", (3, 3))]
+
+        for action, new_position in cases:
+            with self.subTest(action=action):
+                old_state = self._game_state()
+                new_state = self._game_state()
+
+                old_state["coins"] = []
+                new_state["coins"] = []
+
+                # The invalid movement leaves the agent at the same position.
+                old_state["self"] = ("player", 0, True, (3, 3))
+                new_state["self"] = ("player", 0, True, new_position)
+                new_state["step"] = 2
+
+                # Previous action was the same movement action.
+                cached_state = state_to_features(old_state, "f6", previous_action=action)
+
+                events = [game_events.INVALID_ACTION]
+
+                agent = SimpleNamespace(
+                    model=Mock(),
+                    logger=Mock(),
+                    transitions=[],
+                    feature_mode="f6",
+                    cached_features=cached_state
+                )
+
+                events = [game_events.INVALID_ACTION]
+
+                with patch.object(train, "reward_from_events", return_value=0.0):
+                    train.game_events_occurred(agent, old_state, action, new_state, events)
+
+                self.assertIn(train.REPEATED_INVALID_MOVE, events)
+
+                
+    def test_f6_does_not_add_repeated_invalid_move_for_different_previous_action(self):
+        """Reward Test Y: F6 does not flag an invalid move when the previous movement direction was different."""
+        cases = [("UP", "LEFT"), ("DOWN", "RIGHT"), ("LEFT", "UP"), ("RIGHT", "DOWN")]
+
+        for previous_action, current_action in cases:
+            with self.subTest(previous_action=previous_action, current_action=current_action):
+                old_state = self._game_state()
+                new_state = self._game_state()
+
+                old_state["coins"] = []
+                new_state["coins"] = []
+
+                old_state["self"] = ("player", 0, True, (3, 3))
+                new_state["self"] = ("player", 0, True, (3, 3))
+                new_state["step"] = 2
+
+                cached_state = state_to_features(old_state, "f6", previous_action=previous_action)
+
+                agent = SimpleNamespace(
+                    model=Mock(),
+                    logger=Mock(),
+                    transitions=[],
+                    feature_mode="f6",
+                    cached_features=cached_state
+                )
+
+                events = [game_events.INVALID_ACTION]
+
+                with patch.object(train, "reward_from_events", return_value=0.0):
+                    train.game_events_occurred(agent, old_state, current_action, new_state, events)
+
+                self.assertNotIn(train.REPEATED_INVALID_MOVE, events)
+
+
+    def test_f6_does_not_add_repeated_invalid_move_when_move_is_valid(self):
+        """Reward Test Z: F6 does not penalize repeated movement when the repeated action is valid."""
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, True, (4, 3))
+        new_state["step"] = 2
+
+        cached_state = state_to_features(old_state, "f6", previous_action="RIGHT")
+
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f6",
+            cached_features=cached_state
+        )
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertNotIn(train.REPEATED_INVALID_MOVE, events)
+        
+
+
+    def test_f5_does_not_add_f6_repeated_invalid_move_event(self):
+        """Reward Test AA: F5 remains unaffected by F6 repeated-invalid-move shaping."""
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, True, (3, 3))
+        new_state["step"] = 2
+
+        cached_state = state_to_features(old_state, "f5", previous_action="LEFT")
+
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f5",
+            cached_features=cached_state
+        )
+
+        events = [game_events.INVALID_ACTION]
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "LEFT", new_state, events)
+
+        self.assertNotIn(train.REPEATED_INVALID_MOVE, events)
+
+
+    def test_shaped_reward_penalizes_repeated_invalid_move(self):
+        """Reward Test AB: Only shaped reward assigns the additional repeated-invalid-move penalty."""
+        agent = SimpleNamespace(logger=Mock())
+
+        events = [game_events.INVALID_ACTION, train.REPEATED_INVALID_MOVE]
+
+        agent.reward_mode = "sparse"
+        self.assertAlmostEqual(train.reward_from_events(agent, events), 0.0)
+
+        agent.reward_mode = "basic"
+        self.assertAlmostEqual(train.reward_from_events(agent, events), -2.0)
+
+        agent.reward_mode = "shaped"
+        self.assertAlmostEqual(train.reward_from_events(agent, events), -3.0)
+
+
     def test_shortest_path_direction_right(self):
         """Path Test A: Test that a target directly to the right returns RIGHT as the valid first step."""
         state = self._game_state()
@@ -1761,3 +1945,100 @@ class LinearQAgentTest(unittest.TestCase):
 
         self.assertIsNone(agent.cached_features)
         self.assertIsNone(agent.feature_previous_action)
+
+
+    def test_f6_yield_is_zero_when_bomb_unavailable(self):
+        """F6 Yield Test A: Verify that bomb yield is zero when no bomb is available."""
+        state = self._game_state()
+
+        # A crate is within blast range, but the agent cannot place a bomb.
+        state["field"][3, 2] = 1
+        state["self"] = ("player", 0, False, (3, 3))
+
+        features = state_to_features(state, "f6")
+
+        self.assertEqual(features[31], 0.0)
+
+
+    def test_f6_yield_is_zero_when_bomb_is_unsafe(self):
+        """F6 Yield Test B: Verify that bomb yield is zero when the agnet cannot escape after placing a bomb."""
+        state = self._game_state()
+
+        field = np.full((7, 7), -1, dtype=int)
+
+        # The only walkable route remains inside the hypothetical bomb blast.
+        field[3, 3] = 0
+        field[3, 2] = 0
+        field[3, 1] = 0
+
+        # A crate would be destroyed, but there is no safe escape route.
+        field[3, 4] = 1
+
+        state["field"] = field
+        state["self"] = ("player", 0, True, (3, 3))
+        state["coins"] = []
+        state["explosion_map"] = np.zeros((7, 7))
+
+        features = state_to_features(state, "f6")
+
+        self.assertEqual(features[31], 0.0)
+
+
+    def test_f6_yield_counts_single_crate(self):
+        """F6 Yield Test C: Verify that one safely reachable crate contributes one normalized yeild unit."""
+        state = self._game_state()
+
+        # One crate lies within the blast range and escape routes remain available.
+        state["field"][3, 2] = 1
+        state["self"] = ("player", 0, True, (3, 3))
+
+        features = state_to_features(state, "f6")
+
+        expected = 1 / float(4 * callbacks.BOMB_POWER)
+        self.assertAlmostEqual(features[31], expected)
+
+
+    def test_f6_yield_counts_multiple_crates(self):
+        """F6 Yield Test D: Verify that the bomb-yield feature counts multiple crates within the blast area."""
+        state = self._game_state()
+
+        # Three crates lie in different blast directions.
+        # RIGHT remains open so the agent can still escape.
+        state["field"][3, 2] = 1 # UP
+        state["field"][3, 4] = 1 # DOWN
+        state["field"][2, 3] = 1 # LEFT
+        state["self"] = ("player", 0, True, (3, 3))
+
+        features = state_to_features(state, "f6")
+
+        expected = 3 / float(4 * callbacks.BOMB_POWER)
+        self.assertAlmostEqual(features[31], expected)
+
+
+    def test_f6_yield_respects_stone_wall(self):
+        """F6 Yield Test E: Verify that crates behind a stone walla er not counted toward bomb yield."""
+        state = self._game_state()
+
+        # Stone wall blocks the RIGHT blast ray before it reaches the crate.
+        state["field"][4, 3] = -1
+        state["field"][5, 3] = 1
+        state["self"] = ("player", 0, True, (3, 3))
+
+        features = state_to_features(state, "f6")
+
+        self.assertAlmostEqual(features[31], 0.0)
+
+
+    def test_f6_yield_counts_multiple_crates_in_same_direction(self):
+        """F6 Yield Test F: Verify that multiple crates in the same blast direction are all counted when no stone wall intervenes."""
+        state = self._game_state()
+
+        # Two crates lie on the same UP blast ray.
+        state["field"][3, 2] = 1
+        state["field"][3, 1] = 1
+        state["self"] = ("player", 0, True, (3, 3))
+
+        features = state_to_features(state, "f6")
+
+        expected = 2 / float(4 * callbacks.BOMB_POWER)
+        self.assertAlmostEqual(features[31], expected)

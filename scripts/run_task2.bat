@@ -16,6 +16,7 @@ REM   run_task2.bat linear_q_agent f2 shaped 123
 REM   run_task2.bat linear_q_agent f3 shaped 123
 REM   run_task2.bat linear_q_agent f4 shaped 123
 REM   run_task2.bat linear_q_agent f5 shaped 123
+REM   run_task2.bat linear_q_agent f6 shaped 123
 REM   run_task2.bat linear_q_agent f5 shaped 123 gui
 REM   run_task2.bat sarsa_lambda_agent f2 basic 456
 REM
@@ -51,25 +52,25 @@ REM ------------------------------------------------------------
 
 if "%AGENT%"=="" (
     echo ERROR: AGENT is missing.
-    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^|f4^|f5^> ^<basic^|shaped^> ^<seed^>
+    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^|f4^|f5^|f6^> ^<basic^|shaped^> ^<seed^>
     exit /b 1
 )
 
 if "%FEATURE_MODE%"=="" (
     echo ERROR: FEATURE_MODE is missing.
-    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^|f4^|f5^> ^<basic^|shaped^> ^<seed^>
+    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^|f4^|f5^|f6^> ^<basic^|shaped^> ^<seed^>
     exit /b 1
 )
 
 if "%REWARD_MODE%"=="" (
     echo ERROR: REWARD_MODE is missing.
-    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^|f4^|f5^> ^<basic^|shaped^> ^<seed^>
+    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^|f4^|f5^|f6^> ^<basic^|shaped^> ^<seed^>
     exit /b 1
 )
 
 if "%EXPERIMENT_SEED%"=="" (
     echo ERROR: EXPERIMENT_SEED is missing.
-    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^|f4^|f5^> ^<basic^|shaped^> ^<seed^>
+    echo Usage: run_task2.bat ^<agent^> ^<f2^|f3^|f4^|f5^|f6^> ^<basic^|shaped^> ^<seed^>
     exit /b 1
 )
 
@@ -77,8 +78,8 @@ REM ------------------------------------------------------------
 REM Validate feature / reward modes
 REM ------------------------------------------------------------
 
-if /I not "%FEATURE_MODE%"=="f2" if /I not "%FEATURE_MODE%"=="f3" if /I not "%FEATURE_MODE%"=="f4" if /I not "%FEATURE_MODE%"=="f5" (
-    echo ERROR: FEATURE_MODE must be f2, f3, f4 or f5 for Task 2 experiments.
+if /I not "%FEATURE_MODE%"=="f2" if /I not "%FEATURE_MODE%"=="f3" if /I not "%FEATURE_MODE%"=="f4" if /I not "%FEATURE_MODE%"=="f5" if /I not "%FEATURE_MODE%"=="f6" (
+    echo ERROR: FEATURE_MODE must be f2, f3, f4, f5 or f6 for Task 2 experiments.
     exit /b 1
 )
 

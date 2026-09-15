@@ -17,7 +17,7 @@ TASK1_ACTIONS = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'WAIT']
 TASK2_ACTIONS = TASK1_ACTIONS + ["BOMB"]
 
 EPSILON_START = 1.0
-FEATURE_SIZES = {"f0": 7, "f1": 11, "f2": 25, "f3": 26, "f4": 27, "f5": 31}
+FEATURE_SIZES = {"f0": 7, "f1": 11, "f2": 25, "f3": 26, "f4": 27, "f5": 31, "f6": 32}
 
 BOMB_POWER = 3
 BOMB_TIMER = 4
@@ -49,7 +49,7 @@ def setup(self):
     self.feature_mode = os.getenv("FEATURE_MODE", "f1")
 
     if self.feature_mode not in FEATURE_SIZES:
-        raise ValueError("FEATURE_MODE must be one of 'f0', 'f1', 'f2', 'f3', 'f4', or 'f5'.")
+        raise ValueError("FEATURE_MODE must be one of 'f0', 'f1', 'f2', 'f3', 'f4', 'f5', or 'f6'.")
 
     self.feature_size = FEATURE_SIZES[self.feature_mode]
     self.logger.info(f"Feature mode: {self.feature_mode} ({self.feature_size} features)")
@@ -139,7 +139,7 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
         return None
 
     if feature_mode not in FEATURE_SIZES:
-        raise ValueError("feature_mode must be one of 'f0', 'f1', 'f2', 'f3', 'f4', or 'f5'.")
+        raise ValueError("feature_mode must be one of 'f0', 'f1', 'f2', 'f3', 'f4', 'f5', or 'f6'.")
 
     # Get the current location of the agent
     field = game_state["field"] # np.ndarray
@@ -205,11 +205,11 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
                 closest_distance = manhattan_distance
                 closest_coin = coin
 
-        if closest_coin is not None and feature_mode in {"f1", "f2", "f3", "f4", "f5"}:
+        if closest_coin is not None and feature_mode in {"f1", "f2", "f3", "f4", "f5", "f6"}:
             path_directions = shortest_path_directions(field, agent[3], closest_coin)
             features[7:11] = path_directions
 
-    if feature_mode in {"f2", "f3", "f4", "f5"}:
+    if feature_mode in {"f2", "f3", "f4", "f5", "f6"}:
         # 11: bomb available
         features[11] = float(agent[2] > 0)
 
@@ -249,20 +249,24 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
             features[21:25] = shortest_path_directions_to_any(escape_field, agent[3], safe_targets)
 
         # 25: safe to bomb
-        if feature_mode in {"f3", "f4", "f5"}:
+        if feature_mode in {"f3", "f4", "f5", "f6"}:
             safe_to_bomb = bool(agent[2] and can_escape_after_bomb(field, agent[3], bombs, explosion_map))
             features[25] = float(safe_to_bomb)
 
         # 26: safe and useful bomb
-        if feature_mode in {"f4", "f5"}:
+        if feature_mode in {"f4", "f5", "f6"}:
             features[26] = float(safe_to_bomb and bomb_would_destroy_crate(field, agent[3]))
 
         # 27:31: previous action [UP, DOWN, LEFT, RIGHT]
-        if feature_mode in {"f5"}:
+        if feature_mode in {"f5", "f6"}:
             previous_action_to_index = {"UP": 27, "DOWN": 28, "LEFT": 29, "RIGHT": 30}
             index = previous_action_to_index.get(previous_action)
             if index is not None:
                 features[index] = 1.0
+
+        # 31: bomb crate-yield feature
+        if feature_mode in {"f6"}:
+            features[31] = safe_bomb_crate_yield(field, agent[3], bombs, explosion_map, agent[2])
 
     # Return the final feature vector
     return features
@@ -274,7 +278,7 @@ def shortest_path_directions(field, start, target):
 
 
 def actions_for_feature_mode(feature_mode):
-    if feature_mode in {"f2", "f3", "f4", "f5"}:
+    if feature_mode in {"f2", "f3", "f4", "f5", "f6"}:
         return TASK2_ACTIONS
     return TASK1_ACTIONS
 
@@ -455,3 +459,28 @@ def bomb_would_destroy_crate(field, start):
                 return True
 
     return False
+
+
+def safe_bomb_crate_yield(field, start, bombs, explosion_map, bomb_available):
+    """Return the normalized number of crates that a bomb placed at the current position would destroy, provided that placing the bomb is safe."""
+    # No bomb can be placed.
+    if not bomb_available:
+        return 0.0
+
+    # Do not encourage bombing if the agent cannot escape safely.
+    if not can_escape_after_bomb(field, start, bombs, explosion_map): 
+        return 0.0
+
+    crate_count = 0
+    for dx, dy in DIRECTIONS:
+        for distance in range(1, BOMB_POWER + 1):
+            x = start[0] + dx * distance
+            y = start[1] + dy * distance
+
+            if field[x, y] == -1:
+                break
+
+            if field[x, y] == 1:
+                crate_count += 1
+
+    return crate_count / float(4 * BOMB_POWER)

@@ -24,9 +24,9 @@ MOVED_TOWARDS_COIN = "MOVED_TOWARDS_COIN"
 MOVED_AWAY_FROM_COIN = "MOVED_AWAY_FROM_COIN"
 UNNECESSARILY_WAITED = "UNNECESSARILY_WAITED"
 OSCILLATION = "OSCILLATION"
+REPEATED_INVALID_MOVE = "REPEATED_INVALID_MOVE"
 
 ESCAPED_BOMB_DANGER = "ESCAPED_BOMB_DANGER"
-STAYED_IN_BOMB_DANGER = "STAYED_IN_BOMB_DANGER"
 MOVED_TOWARDS_CRATE = "MOVED_TOWARDS_CRATE"
 MOVED_AWAY_FROM_CRATE = "MOVED_AWAY_FROM_CRATE"
 SAFE_USEFUL_BOMB_DROPPED = "SAFE_USEFUL_BOMB_DROPPED"
@@ -53,7 +53,8 @@ SHAPING_EXTRA_REWARDS = {
     MOVED_AWAY_FROM_CRATE: -1,
     SAFE_USEFUL_BOMB_DROPPED: +2,
 
-    OSCILLATION: -0.5
+    OSCILLATION: -0.5,
+    REPEATED_INVALID_MOVE: -1.0
 }
 
 REWARD_CONFIGS = {
@@ -88,11 +89,6 @@ def setup_training(self):
     self.epsilon_min = EPSILON_MIN
     self.epsilon_decay = EPSILON_DECAY
 
-    # Movement tracking
-    self.last_action = None
-    self.previous_action = None
-    self.last_distance = None
-
     # Reward configuration
     self.reward_mode = os.getenv("REWARD_MODE", "basic").lower()
 
@@ -120,7 +116,7 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     self.logger.debug(f'Encountered game event(s) {", ".join(map(repr, events))} in step {new_game_state["step"]}')
 
     # state_to_features is defined in callbacks.py
-    if self.feature_mode in {"f5"}:
+    if self.feature_mode in {"f5", "f6"}:
         state = self.cached_features
         next_state = state_to_features(new_game_state, self.feature_mode, previous_action=self_action)
     else:
@@ -128,19 +124,19 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
         next_state = state_to_features(new_game_state, self.feature_mode)
 
     # Custom event: safe and useful bomb placement
-    if self.feature_mode in {"f4", "f5"} and self_action == "BOMB" and state[26] == 1.0:
+    if self.feature_mode in {"f4", "f5", "f6"} and self_action == "BOMB" and state[26] == 1.0:
         events.append(SAFE_USEFUL_BOMB_DROPPED)
 
     # Bomb danger status
-    old_in_danger = self.feature_mode in {"f2", "f3", "f4", "f5"} and state[20] == 1.0
-    new_in_danger = self.feature_mode in {"f2", "f3", "f4", "f5"} and next_state[20]  == 1.0
+    old_in_danger = self.feature_mode in {"f2", "f3", "f4", "f5", "f6"} and state[20] == 1.0
+    new_in_danger = self.feature_mode in {"f2", "f3", "f4", "f5", "f6"} and next_state[20]  == 1.0
 
     # Custom event: escaped bomb danger
     if old_in_danger and not new_in_danger:
         events.append(ESCAPED_BOMB_DANGER)
 
     # Custom event: move along crate path
-    if self.feature_mode in {"f2", "f3", "f4", "f5"}:
+    if self.feature_mode in {"f2", "f3", "f4", "f5", "f6"}:
         crate_path = state[16:20]
 
         # Only search for crates when there is no visible coin and escaping a bomb is not currently more important.
@@ -199,12 +195,20 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     opposite_index = opposite_previous_feature.get(self_action)
 
     if (
-        self.feature_mode in {"f5"}
+        self.feature_mode in {"f5", "f6"}
         and not old_in_danger
         and opposite_index is not None
         and state[opposite_index] == 1.0
     ):
         events.append(OSCILLATION)
+
+    # Penalize repeating the same invalid movement action.
+    same_previous_feature = {"UP": 27, "DOWN": 28, "LEFT": 29, "RIGHT": 30}
+
+    same_index = same_previous_feature.get(self_action)
+
+    if self.feature_mode in {"f6"} and e.INVALID_ACTION in events and same_index is not None and state[same_index] == 1.0:
+        events.append(REPEATED_INVALID_MOVE)
 
     # Model Learn
     reward = reward_from_events(self, events)
@@ -227,7 +231,7 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
     """
     self.logger.debug(f'Encountered event(s) {", ".join(map(repr, events))} in final step')
 
-    if self.feature_mode == "f5":
+    if self.feature_mode in {"f5", "f6"}:
         state = self.cached_features
     else:
         state = state_to_features(last_game_state, self.feature_mode)
@@ -238,9 +242,6 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
     self.transitions.append(Transition(state, last_action, None, reward))
 
     # Reset each round
-    self.previous_action = None
-    self.last_action = None
-    self.last_distance = None
     self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
     self.feature_previous_action = None
     self.cached_features = None
