@@ -715,6 +715,94 @@ class LinearQAgentTest(unittest.TestCase):
         agent.model.predict.assert_called_once()
 
 
+    def test_f6_rejects_zero_yield_bomb(self):
+        """F6 Action Test A: BOMB is unavailable when no safe crate yield exists."""
+        features = np.zeros(callbacks.FEATURE_SIZES["f6"])
+        features[1:5] = 1.0
+        features[31] = 0.0
+
+        candidates = callbacks.action_candidates(
+            features,
+            callbacks.actions_for_feature_mode("f6"),
+            "f6",
+        )
+
+        self.assertNotIn("BOMB", candidates)
+
+
+    def test_f6_rejects_blocked_moves_and_immediate_reversal(self):
+        """F6 Action Test B: F6 avoids known invalid and oscillating moves."""
+        features = np.zeros(callbacks.FEATURE_SIZES["f6"])
+        features[1] = 1.0  # UP is free.
+        features[2] = 1.0  # DOWN is free, but is the reverse.
+        features[27] = 1.0  # The previous action was UP.
+        features[31] = 0.0
+
+        candidates = callbacks.action_candidates(
+            features,
+            callbacks.actions_for_feature_mode("f6"),
+            "f6",
+        )
+
+        self.assertNotIn("LEFT", candidates)
+        self.assertNotIn("RIGHT", candidates)
+        self.assertNotIn("DOWN", candidates)
+        self.assertIn("UP", candidates)
+
+
+    def test_f6_allows_reversal_when_in_bomb_danger(self):
+        """F6 Action Test C: Escape movement may reverse direction in danger."""
+        features = np.zeros(callbacks.FEATURE_SIZES["f6"])
+        features[2] = 1.0  # DOWN is free.
+        features[20] = 1.0  # The agent is in bomb danger.
+        features[27] = 1.0  # The previous action was UP.
+
+        candidates = callbacks.action_candidates(
+            features,
+            callbacks.actions_for_feature_mode("f6"),
+            "f6",
+        )
+
+        self.assertIn("DOWN", candidates)
+
+
+    def test_f6_avoids_recent_position_cycle_when_fresh_move_exists(self):
+        """F6 Action Test D: A fresh tile is preferred over a short loop."""
+        features = np.zeros(callbacks.FEATURE_SIZES["f6"])
+        features[1:5] = 1.0
+        features[31] = 0.0
+
+        candidates = callbacks.action_candidates(
+            features,
+            callbacks.actions_for_feature_mode("f6"),
+            "f6",
+            position=(2, 2),
+            recent_positions={(2, 2), (2, 1), (3, 2), (2, 3)},
+        )
+
+        self.assertEqual(candidates, ["LEFT", "WAIT"])
+
+
+    def test_f6_allows_recent_position_when_no_fresh_move_exists(self):
+        """F6 Action Test E: A revisited tile remains available as a fallback."""
+        features = np.zeros(callbacks.FEATURE_SIZES["f6"])
+        features[1:5] = 1.0
+        features[31] = 0.0
+
+        candidates = callbacks.action_candidates(
+            features,
+            callbacks.actions_for_feature_mode("f6"),
+            "f6",
+            position=(2, 2),
+            recent_positions={(2, 2), (2, 1), (3, 2), (2, 3), (1, 2)},
+        )
+
+        self.assertIn("UP", candidates)
+        self.assertIn("DOWN", candidates)
+        self.assertIn("LEFT", candidates)
+        self.assertIn("RIGHT", candidates)
+
+
     def test_game_event_updates_selected_action_without_decaying_epsilon(self):
         agent = SimpleNamespace(
             model=Mock(),
