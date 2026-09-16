@@ -113,23 +113,27 @@ def act(self, game_state: dict) -> str:
         self.recent_positions = deque(maxlen=12)
     self.recent_positions.append(position)
 
+    allowed_actions = action_candidates(
+        features,
+        self.actions,
+        self.feature_mode,
+        position=position,
+        recent_positions=self.recent_positions,
+        field=game_state["field"],
+        bombs=game_state["bombs"],
+        explosion_map=game_state.get("explosion_map"),
+    )
+
     # Exploration during training
     if self.train and self.rng.random() < self.epsilon:
         self.logger.debug("Choosing action purely at random.")
-        action = self.rng.choice(self.actions)
+        action = self.rng.choice(allowed_actions)
     else:
         # Exploitation
         q_values = self.model.predict(features)
 
         # F6 can reject actions that are known to be invalid or counterproductive
         # even when an old checkpoint assigns them a high Q-value.
-        allowed_actions = action_candidates(
-            features,
-            self.actions,
-            self.feature_mode,
-            position=position,
-            recent_positions=self.recent_positions,
-        )
         masked_q_values = np.full_like(q_values, -np.inf, dtype=float)
         for action in allowed_actions:
             masked_q_values[self.actions.index(action)] = q_values[self.actions.index(action)]
@@ -149,6 +153,9 @@ def action_candidates(
     feature_mode: str,
     position=None,
     recent_positions=(),
+    field=None,
+    bombs=(),
+    explosion_map=None,
 ):
     """Return actions that are valid and sensible for the current F6 state."""
     if feature_mode != "f6":
@@ -161,6 +168,9 @@ def action_candidates(
     # a reachable escape and at least one crate in the blast area.
     if features[31] <= 0.0 and "BOMB" in candidates:
         candidates.remove("BOMB")
+    elif "BOMB" in candidates and field is not None and position is not None:
+        if not can_escape_after_bomb(field, position, bombs, explosion_map):
+            candidates.remove("BOMB")
 
     # Never deliberately choose a blocked movement. Keep WAIT as a fallback.
     movement_features = {
@@ -174,9 +184,75 @@ def action_candidates(
         if action not in movement_features or features[movement_features[action]] == 1.0
     ]
 
+    if field is not None and position is not None and not in_danger:
+        danger_tiles = bomb_danger_tiles(field, bombs, explosion_map)
+        offsets = {
+            "UP": (0, -1),
+            "DOWN": (0, 1),
+            "LEFT": (-1, 0),
+            "RIGHT": (1, 0),
+        }
+        candidates = [
+            action for action in candidates
+            if action not in offsets
+            or (
+                position[0] + offsets[action][0],
+                position[1] + offsets[action][1],
+            ) not in danger_tiles
+        ]
+
+    if in_danger:
+        danger_tiles = bomb_danger_tiles(field, bombs, explosion_map) if field is not None else set()
+        offsets = {
+            "UP": (0, -1),
+            "DOWN": (0, 1),
+            "LEFT": (-1, 0),
+            "RIGHT": (1, 0),
+        }
+        immediate_escape_actions = [
+            action for action in candidates
+            if action in offsets
+            and position is not None
+            and (
+                position[0] + offsets[action][0],
+                position[1] + offsets[action][1],
+            ) not in danger_tiles
+        ]
+        if immediate_escape_actions:
+            return immediate_escape_actions
+
+        escape_actions = [
+            action for index, action in enumerate(("UP", "DOWN", "LEFT", "RIGHT"))
+            if features[21 + index] == 1.0 and action in candidates
+        ]
+        if escape_actions:
+            # During an explosion threat, learned preferences and exploration
+            # must not override the computed route to a safe tile.
+            return escape_actions
+
+        # If no route was found, do not wait or place another bomb.
+        emergency_actions = [
+            action for action in candidates if action not in {"WAIT", "BOMB"}
+        ]
+        return emergency_actions or candidates
+
     # Outside bomb danger, avoid an immediate reversal when another action is
     # available. In danger, the escape policy must be allowed to reverse.
     if not in_danger:
+        coin_path = features[7:11]
+        crate_path = features[16:20]
+        target_path = coin_path if coin_path.any() else crate_path
+
+        # Prefer the shortest path to a visible coin, then to a useful crate
+        # placement tile. This keeps exploration and exploitation goal-directed.
+        if target_path.any():
+            path_actions = [
+                action for index, action in enumerate(("UP", "DOWN", "LEFT", "RIGHT"))
+                if target_path[index] == 1.0 and action in candidates
+            ]
+            if path_actions:
+                candidates = path_actions
+
         opposite = {"UP": "DOWN", "DOWN": "UP", "LEFT": "RIGHT", "RIGHT": "LEFT"}
         previous_action = next(
             (action for action, index in {
@@ -337,7 +413,13 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
                 escape_field[bomb_x, bomb_y] = -1
 
         if features[20] == 1.0:
-            features[21:25] = shortest_path_directions_to_any(escape_field, agent[3], safe_targets)
+            features[21:25] = escape_directions(
+                escape_field,
+                agent[3],
+                bombs,
+                explosion_map,
+                danger_tiles,
+            )
 
         # 25: safe to bomb
         if feature_mode in {"f3", "f4", "f5", "f6"}:
@@ -481,53 +563,79 @@ def can_escape_after_bomb(field, start, bombs, explosion_map=None):
     """Return True if a bomb placed at start still allows escape within BOMB_TIMER moves."""
     hypothetical_bombs = list(bombs) + [(start, BOMB_TIMER)]
     danger_tiles = bomb_danger_tiles(field, hypothetical_bombs, explosion_map)
-    existing_bomb_tiles = {position for position, _timer in bombs}
+    escape_field = field.copy()
+    for position, _timer in bombs:
+        if position != start:
+            escape_field[position] = -1
+    return bool(escape_directions(
+        escape_field,
+        start,
+        hypothetical_bombs,
+        explosion_map,
+        danger_tiles,
+    ).any())
 
-    queue = deque([(start, 0)])
+
+def escape_directions(field, start, bombs, explosion_map=None, danger_tiles=None):
+    """Return first moves that reach a safe tile before the relevant bomb explodes."""
+    if danger_tiles is None:
+        danger_tiles = bomb_danger_tiles(field, bombs, explosion_map)
+
+    relevant_timers = [
+        timer for bomb, timer in bombs
+        if start in bomb_danger_tiles(field, [(bomb, timer)])
+    ]
+    if explosion_map is not None and explosion_map[start] > 0:
+        relevant_timers.append(1)
+    if not relevant_timers:
+        return np.zeros(4)
+
+    max_distance = min(relevant_timers)
+    if max_distance < 1:
+        return np.zeros(4)
+
+    existing_bomb_tiles = {position for position, _timer in bombs}
+    escape_directions = np.zeros(4)
+    queue = deque()
     visited = {start}
 
+    for index, (dx, dy) in enumerate(DIRECTIONS):
+        nx = start[0] + dx
+        ny = start[1] + dy
+        next_pos = (nx, ny)
+        if not (0 <= nx < field.shape[0] and 0 <= ny < field.shape[1]):
+            continue
+        if field[nx, ny] != 0 or next_pos in existing_bomb_tiles:
+            continue
+        if explosion_map is not None and explosion_map[nx, ny] > 0:
+            continue
+        queue.append((next_pos, 1, index))
+        visited.add(next_pos)
+
     while queue:
-        (x, y), distance = queue.popleft()
-
-        # We found a tile outside the future blast zone.
-        if distance > 0 and (x, y) not in danger_tiles:
-            return True
-
-        # No more movement possible before explosion.
-        if distance >= BOMB_TIMER:
+        (x, y), distance, first_direction = queue.popleft()
+        if (x, y) not in danger_tiles:
+            escape_directions[first_direction] = 1.0
+            continue
+        if distance >= max_distance:
             continue
 
         for dx, dy in DIRECTIONS:
             nx = x + dx
             ny = y + dy
             next_pos = (nx, ny)
-
             if not (0 <= nx < field.shape[0] and 0 <= ny < field.shape[1]):
                 continue
-
-            # Walls and crates are not walkable.
-            if field[nx, ny] != 0:
+            if field[nx, ny] != 0 or next_pos in existing_bomb_tiles:
                 continue
-
-            # Existing bombs are obstacles.
-            if next_pos in existing_bomb_tiles:
-                continue
-
-            # After leaving the newly placed bomb tile, the agent cannot walk back onto it.
-            if next_pos == start:
-                continue
-
-            # Never walk through an active explosion.
             if explosion_map is not None and explosion_map[nx, ny] > 0:
                 continue
-
             if next_pos in visited:
                 continue
-
             visited.add(next_pos)
-            queue.append((next_pos, distance + 1))
+            queue.append((next_pos, distance + 1, first_direction))
 
-    return False
+    return escape_directions
 
 
 def bomb_would_destroy_crate(field, start):
