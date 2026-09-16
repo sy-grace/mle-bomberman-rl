@@ -253,7 +253,7 @@ class LinearQAgentTest(unittest.TestCase):
 
         features = state_to_features(state, "f2")
 
-        expected = np.array([0.0, 0.0, 0.0, 1.0])
+        expected = np.array([1.0, 1.0, 0.0, 1.0])
         np.testing.assert_array_equal(features[21:25], expected)
 
 
@@ -766,8 +766,164 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertIn("DOWN", candidates)
 
 
+    def test_f6_prioritizes_computed_escape_direction_in_bomb_danger(self):
+        """F6 Action Test D: Danger mode only permits computed escape actions."""
+        features = np.zeros(callbacks.FEATURE_SIZES["f6"])
+        features[1:5] = 1.0
+        features[20] = 1.0
+        features[21 + 1] = 1.0  # DOWN is the computed escape direction.
+        features[31] = 1.0
+
+        candidates = callbacks.action_candidates(
+            features,
+            callbacks.actions_for_feature_mode("f6"),
+            "f6",
+        )
+
+        self.assertEqual(candidates, ["DOWN"])
+
+
+    def test_f6_danger_mode_does_not_wait_without_escape_feature(self):
+        """F6 Action Test E: Danger mode avoids WAIT and BOMB if no route is known."""
+        features = np.zeros(callbacks.FEATURE_SIZES["f6"])
+        features[1:5] = 1.0
+        features[20] = 1.0
+        features[31] = 1.0
+
+        candidates = callbacks.action_candidates(
+            features,
+            callbacks.actions_for_feature_mode("f6"),
+            "f6",
+        )
+
+        self.assertNotIn("WAIT", candidates)
+        self.assertNotIn("BOMB", candidates)
+
+
+    def test_escape_directions_respect_bomb_timer(self):
+        """F6 Escape Test A: A route must reach safety before the blast."""
+        state = self._game_state()
+        state["coins"] = []
+        state["self"] = ("player", 0, False, (3, 3))
+        state["bombs"] = [((3, 3), 2)]
+        state["field"][3, 2] = -1
+        state["field"][3, 4] = -1
+        state["field"][2, 3] = -1
+        state["field"][4, 2] = -1
+        state["field"][4, 4] = -1
+
+        features = state_to_features(state, "f6")
+
+        self.assertEqual(features[20], 1.0)
+        self.assertFalse(features[21:25].any())
+
+
+    def test_unrelated_short_timer_bomb_does_not_block_escape(self):
+        """F6 Escape Test B: Only bombs threatening the agent set the deadline."""
+        state = self._game_state()
+        state["coins"] = []
+        state["self"] = ("player", 0, False, (3, 3))
+        state["bombs"] = [((3, 3), 4), ((5, 5), 1)]
+
+        features = state_to_features(state, "f6")
+
+        self.assertEqual(features[20], 1.0)
+        self.assertTrue(features[21:25].any())
+
+
+    def test_f6_escapes_active_explosion_after_bomb_is_removed(self):
+        """F6 Escape Test C: Lingering explosions still provide escape directions."""
+        state = self._game_state()
+        state["coins"] = []
+        state["self"] = ("player", 0, False, (3, 3))
+        state["bombs"] = []
+        state["explosion_map"][3, 3] = 1
+
+        features = state_to_features(state, "f6")
+
+        self.assertEqual(features[20], 1.0)
+        self.assertTrue(features[21:25].any())
+
+
+    def test_f6_rejects_move_into_adjacent_explosion(self):
+        """F6 Escape Test D: Safe agents cannot step into an active blast."""
+        state = self._game_state()
+        state["coins"] = []
+        state["self"] = ("player", 0, False, (3, 3))
+        state["bombs"] = []
+        state["explosion_map"][4, 3] = 1
+        features = state_to_features(state, "f6")
+
+        candidates = callbacks.action_candidates(
+            features,
+            callbacks.actions_for_feature_mode("f6"),
+            "f6",
+            position=(3, 3),
+            field=state["field"],
+            bombs=state["bombs"],
+            explosion_map=state["explosion_map"],
+        )
+
+        self.assertNotIn("RIGHT", candidates)
+
+
+    def test_f6_prefers_immediately_safe_move_over_blast_corridor(self):
+        """F6 Escape Test E: Danger mode leaves the current blast line directly."""
+        state = self._game_state()
+        state["coins"] = []
+        state["self"] = ("player", 0, False, (3, 3))
+        state["bombs"] = [((3, 5), 3)]
+        features = state_to_features(state, "f6")
+
+        candidates = callbacks.action_candidates(
+            features,
+            callbacks.actions_for_feature_mode("f6"),
+            "f6",
+            position=(3, 3),
+            field=state["field"],
+            bombs=state["bombs"],
+            explosion_map=state["explosion_map"],
+        )
+
+        self.assertIn("LEFT", candidates)
+        self.assertIn("RIGHT", candidates)
+
+
+    def test_f6_prioritizes_visible_coin_path(self):
+        """F6 Action Test I: A reachable coin path excludes waiting and bombing."""
+        features = np.zeros(callbacks.FEATURE_SIZES["f6"])
+        features[1:5] = 1.0
+        features[5] = 0.5
+        features[7] = 1.0  # UP is on a shortest path to the coin.
+        features[31] = 1.0  # A bomb would otherwise have positive yield.
+
+        candidates = callbacks.action_candidates(
+            features,
+            callbacks.actions_for_feature_mode("f6"),
+            "f6",
+        )
+
+        self.assertEqual(candidates, ["UP"])
+
+
+    def test_f6_prioritizes_crate_path_when_no_coin_is_visible(self):
+        """F6 Action Test J: A crate path is preferred before bombing."""
+        features = np.zeros(callbacks.FEATURE_SIZES["f6"])
+        features[1:5] = 1.0
+        features[16 + 3] = 1.0  # RIGHT reaches a crate placement tile.
+        features[31] = 1.0
+
+        candidates = callbacks.action_candidates(
+            features,
+            callbacks.actions_for_feature_mode("f6"),
+            "f6",
+        )
+
+        self.assertEqual(candidates, ["RIGHT"])
+
+
     def test_f6_avoids_recent_position_cycle_when_fresh_move_exists(self):
-        """F6 Action Test D: A fresh tile is preferred over a short loop."""
+        """F6 Action Test K: A fresh tile is preferred over a short loop."""
         features = np.zeros(callbacks.FEATURE_SIZES["f6"])
         features[1:5] = 1.0
         features[31] = 0.0
@@ -784,7 +940,7 @@ class LinearQAgentTest(unittest.TestCase):
 
 
     def test_f6_allows_recent_position_when_no_fresh_move_exists(self):
-        """F6 Action Test E: A revisited tile remains available as a fallback."""
+        """F6 Action Test L: A revisited tile remains available as a fallback."""
         features = np.zeros(callbacks.FEATURE_SIZES["f6"])
         features[1:5] = 1.0
         features[31] = 0.0
@@ -1088,6 +1244,47 @@ class LinearQAgentTest(unittest.TestCase):
         reward = train.reward_from_events(agent, events)
         
         self.assertAlmostEqual(reward, 3)
+
+
+    def test_f6_shaped_reward_scales_safe_bomb_by_crate_yield(self):
+        """Reward Test M2: F6 gives larger rewards for higher-yield safe bombs."""
+        agent = SimpleNamespace(
+            logger=Mock(),
+            feature_mode="f6",
+            reward_mode="shaped",
+        )
+
+        expected_rewards = {
+            1: 2,
+            2: 4,
+            3: 6,
+            5: 6,
+        }
+
+        for crate_count, expected in expected_rewards.items():
+            with self.subTest(crate_count=crate_count):
+                agent.safe_bomb_crate_count = crate_count
+                reward = train.reward_from_events(
+                    agent,
+                    [train.SAFE_USEFUL_BOMB_DROPPED],
+                )
+                self.assertEqual(reward, expected)
+
+
+    def test_f4_safe_bomb_keeps_fixed_shaping_reward(self):
+        """Reward Test M3: F4/F5 retain the fixed safe-bomb reward."""
+        agent = SimpleNamespace(
+            logger=Mock(),
+            feature_mode="f4",
+            reward_mode="shaped",
+        )
+
+        reward = train.reward_from_events(
+            agent,
+            [train.SAFE_USEFUL_BOMB_DROPPED],
+        )
+
+        self.assertEqual(reward, 1)
 
 
     def test_f2_adds_towards_crate_event_for_recommended_move(self):
