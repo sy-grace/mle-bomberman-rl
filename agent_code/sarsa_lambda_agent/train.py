@@ -23,12 +23,13 @@ EPSILON_DECAY = 0.99
 MOVED_TOWARDS_COIN = "MOVED_TOWARDS_COIN"
 MOVED_AWAY_FROM_COIN = "MOVED_AWAY_FROM_COIN"
 UNNECESSARILY_WAITED = "UNNECESSARILY_WAITED"
-OSCILLATION = "OSCILLATION"
 
 ESCAPED_BOMB_DANGER = "ESCAPED_BOMB_DANGER"
 MOVED_TOWARDS_CRATE = "MOVED_TOWARDS_CRATE"
 MOVED_AWAY_FROM_CRATE = "MOVED_AWAY_FROM_CRATE"
 SAFE_USEFUL_BOMB_DROPPED = "SAFE_USEFUL_BOMB_DROPPED"
+
+KILLED_OPPONENT = "KILLED_OPPONENT"
 
 SPARSE_REWARDS = {
     e.COIN_COLLECTED: +10
@@ -39,6 +40,7 @@ BASIC_EXTRA_REWARDS = {
     e.CRATE_DESTROYED: +2,
     e.COIN_FOUND: +3,
     e.KILLED_SELF: -20,
+    e.KILLED_OPPONENT: +5,
 }
 
 SHAPING_EXTRA_REWARDS = {
@@ -51,8 +53,6 @@ SHAPING_EXTRA_REWARDS = {
     MOVED_TOWARDS_CRATE: +1,
     MOVED_AWAY_FROM_CRATE: -1,
     SAFE_USEFUL_BOMB_DROPPED: +2,
-
-    OSCILLATION: -0.5
 }
 
 REWARD_CONFIGS = {
@@ -117,12 +117,8 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     self.logger.debug(f'Encountered game event(s) {", ".join(map(repr, events))} in step {new_game_state["step"]}')
 
     # state_to_features is defined in callbacks.py
-    if self.feature_mode in {"f5"}:
-        state = self.cached_features
-        next_state = state_to_features(new_game_state, self.feature_mode, previous_action=self_action)
-    else:
-        state = state_to_features(old_game_state, self.feature_mode)
-        next_state = state_to_features(new_game_state, self.feature_mode)
+    state = state_to_features(old_game_state, self.feature_mode)
+    next_state = state_to_features(new_game_state, self.feature_mode)
 
     # Custom event: safe and useful bomb placement
     if self.feature_mode in {"f4", "f5"} and self_action == "BOMB" and state[26] == 1.0:
@@ -185,24 +181,6 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     if not old_in_danger and self_action == "WAIT" and old_distance > 0:
         events.append(UNNECESSARILY_WAITED)
 
-    # Penalize immediate movement reversal in F5.
-    opposite_previous_feature = {
-        "UP": 28,       # previous DOWN
-        "DOWN": 27,     # previous UP
-        "LEFT": 30,     # previous RIGHT
-        "RIGHT": 29,    # previous LEFT
-    }
-
-    opposite_index = opposite_previous_feature.get(self_action)
-
-    if (
-        self.feature_mode in {"f5"}
-        and not old_in_danger
-        and opposite_index is not None
-        and state[opposite_index] == 1.0
-    ):
-        events.append(OSCILLATION)
-
     # Model Learn
     reward = reward_from_events(self, events)
     action = ACTION_TO_INDEX[self_action]
@@ -228,10 +206,7 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
     """
     self.logger.debug(f'Encountered event(s) {", ".join(map(repr, events))} in final step')
 
-    if self.feature_mode == "f5":
-        state = self.cached_features
-    else:
-        state = state_to_features(last_game_state, self.feature_mode)
+    state = state_to_features(last_game_state, self.feature_mode)
 
     reward = reward_from_events(self, events)
     action = ACTION_TO_INDEX[last_action]

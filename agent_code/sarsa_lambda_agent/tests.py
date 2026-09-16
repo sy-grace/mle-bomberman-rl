@@ -98,7 +98,7 @@ class LinearSARSAAgentTest(unittest.TestCase):
         
 
     def test_features_agent_in_corner(self):
-        """TesFeature Test F: Agent is at a walkable corner next to border walls."""
+        """Feature Test F: Agent is at a walkable corner next to border walls."""
         state = self._game_state()
 
         # The agent is in the corner
@@ -518,11 +518,11 @@ class LinearSARSAAgentTest(unittest.TestCase):
         self.assertEqual(features[26], 0.0) # safe_and_useful_bomb
 
 
-    def test_f5_feature_vector_has_thirty_one_features(self):
-        """Feature Test AL: Verify that F5 produces a 31-dimensional feature vector."""
+    def test_f5_feature_vector_has_thirty_six_features(self):
+        """Feature Test AL: Verify that F5 produces a 36-dimensional feature vector."""
         state = self._game_state()
         features = state_to_features(state, "f5")
-        self.assertEqual(features.shape, (31,))
+        self.assertEqual(features.shape, (36,))
 
 
     def test_f5_preserves_all_f4_features(self):
@@ -542,42 +542,111 @@ class LinearSARSAAgentTest(unittest.TestCase):
         self.assertEqual(actions, expected)
 
 
-    def test_f5_fresh_model_uses_thirty_one_inputs_and_six_outputs(self):
-        """Feature Test AO: Fresh F5 training creates a 31-input, 6-action model."""
+    def test_f5_fresh_model_uses_thirty_six_inputs_and_six_outputs(self):
+        """Feature Test AO: Fresh F5 training creates a 36-input, 6-action model."""
         agent = SimpleNamespace(train=True, logger=Mock())
 
         with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "FEATURE_MODE": "f5"}, clear=True):
             callbacks.setup(agent)
 
-        self.assertEqual(agent.model.input_size, 31)
+        self.assertEqual(agent.model.input_size, 36)
         self.assertEqual(agent.model.output_size, 6)
 
 
-    def test_f5_encodes_previous_movement_action(self):
-        """Feature Test AP: F5 one-hot encodes the previous movement action."""
+    def test_f5_new_features_are_zero_without_opponents(self):
+        """Feature Test AP: F5 opponent-related features stay zero when no opponents are present."""
+        state = self._game_state()
+        state["others"] = []
+
+        features = state_to_features(state, "f5")
+
+        # [27:36] contain all opponent-aware F5 features.
+        np.testing.assert_array_equal(features[27:36], np.zeros(9))
+
+
+    def test_f5_detects_adjacent_opponent_up(self):
+        """Feature Test AQ: F5 detects an opponent directly above the agent."""
         state = self._game_state()
 
-        expected_by_action = {
-            "UP": [1.0, 0.0, 0.0, 0.0],
-            "DOWN": [0.0, 1.0, 0.0, 0.0],
-            "LEFT": [0.0, 0.0, 1.0, 0.0],
-            "RIGHT": [0.0, 0.0, 0.0, 1.0],
-        }
+        # Agent is at (3, 3); opponent is directly above at (3, 2).
+        state["others"] = [("enemy", 0, True, (3, 2))]
 
-        for action, expected in expected_by_action.items():
-            with self.subTest(action=action):
-                features = state_to_features(state, "f5", previous_action=action)
-                np.testing.assert_array_equal(features[27:31], expected)
+        features = state_to_features(state, "f5")
+
+        # Adjacent opponent order: [UP, DOWN, LEFT, RIGHT].
+        np.testing.assert_array_equal(features[27:31], [1.0, 0.0, 0.0, 0.0])
 
 
-    def test_f5_keeps_previous_action_features_zero_for_non_movement(self):
-        """Feature Test AQ: WAIT, BOMB, and no history do not activate movement-history features."""
+    def test_f5_detects_adjacent_opponents_in_multiple_directions(self):
+        """Feature Test AR: F5 detects multiple opponents on adjacent tiles."""
         state = self._game_state()
 
-        for action in [None, "WAIT", "BOMB"]:
-            with self.subTest(action=action):
-                features = state_to_features(state, "f5", previous_action=action)
-                np.testing.assert_array_equal(features[27:31], np.zeros(4))
+        # Opponents stand directly LEFT and RIGHT of the agent.
+        state["others"] = [("enemy1", 0, True, (2, 3)), ("enemy2", 0, True, (4, 3))]
+
+        features = state_to_features(state, "f5")
+
+        # Adjacent opponent order: [UP, DOWN, LEFT, RIGHT].
+        np.testing.assert_array_equal(features[27:31], [0.0, 0.0, 1.0, 1.0])
+
+
+    def test_f5_points_towards_opponent(self):
+        """Feature Test AS: F5 points toward a reachable approach tile next to an opponent."""
+        state = self._game_state()
+        state["coins"] = []
+
+        # Agent is at (3, 3), opponent at (5, 3)
+        state["others"] = [("enemy", 0, True, (5, 3))]
+
+        features = state_to_features(state, "f5")
+
+        # The opponent tile itself is not walkable.
+        # The nearest reachable approach tile is therefore (4, 3), i.e. RIGHT.
+        np.testing.assert_array_equal(features[31:35], [0.0, 0.0, 0.0, 1.0])
+
+
+    def test_f5_marks_safe_opponent_bomb(self):
+        """Feature Test AT: F5 marks a bomb as useful when it safely threatens an opponent."""
+        state = self._game_state()
+        state["coins"] = []
+        state["self"] = ("player", 0, True, (3, 3))
+
+        # Opponent is inside the blast range to the RIGHT.
+        state["others"] = [("enemy", 0, True, (5, 3))]
+
+        features = state_to_features(state, "f5")
+
+        # [35] indicates a safe bomb that would hit an opponent.
+        self.assertEqual(features[35], 1.0)
+
+
+    def test_f5_does_not_target_opponent_behind_crate(self):
+        """Feature Test AU: F5 does not mark a bomb useful when a crate blocks the blast."""
+        state = self._game_state()
+        state["coins"] = []
+        state["self"] = ("player", 0, True, (3, 3))
+
+        # Crate at (4, 3) blocks the blast before it reaches the opponent.
+        state["field"][4, 3] = 1
+        state["others"] = [("enemy", 0, True, (5, 3))]
+
+        features = state_to_features(state, "f5")
+
+        self.assertEqual(features[35], 0.0)
+
+
+    def test_f5_opponent_bomb_is_zero_when_bomb_unavailable(self):
+        """Feature Test AV: F5 keeps the opponent-bomb feature zero when no bomb is available."""
+        state = self._game_state()
+        state["coins"] = []
+
+        # bombs_left = False means the agent cannot currently place a bomb.
+        state["self"] = ("player", 0, False, (3, 3))
+        state["others"] = [("enemy", 0, True, (5, 3))]
+
+        features = state_to_features(state, "f5")
+
+        self.assertEqual(features[35], 0.0)
 
 
     def test_predict_returns_one_value_per_action(self):
@@ -801,9 +870,7 @@ class LinearSARSAAgentTest(unittest.TestCase):
         """Reward Test E: Test that excluded custom event contributes zero reward in all modes."""
         agent = SimpleNamespace(logger=Mock())
 
-        events = [
-            train.OSCILLATION
-        ]
+        events = ["UNUSED_EVENT"]
 
         agent.reward_mode = "sparse"
         reward_sparse = train.reward_from_events(agent, events)
@@ -816,7 +883,7 @@ class LinearSARSAAgentTest(unittest.TestCase):
         
         self.assertEqual(reward_sparse, 0)
         self.assertEqual(reward_basic, 0)
-        self.assertEqual(reward_shaped, -0.5)
+        self.assertEqual(reward_shaped, 0)
 
 
     def test_coin_collection_skips_distance_shaping(self):
@@ -1112,194 +1179,6 @@ class LinearSARSAAgentTest(unittest.TestCase):
 
         self.assertNotIn(train.MOVED_TOWARDS_CRATE, events)
         self.assertNotIn(train.MOVED_AWAY_FROM_CRATE, events)
-
-
-    def test_shaped_reward_penalizes_oscillation(self):
-        """Reward Test R: Only shaped reward assigns a penalty to oscillation."""
-        agent = SimpleNamespace(logger=Mock())
-
-        agent.reward_mode = "sparse"
-        self.assertAlmostEqual(train.reward_from_events(agent, [train.OSCILLATION]), 0.0)
-
-        agent.reward_mode = "basic"
-        self.assertAlmostEqual(train.reward_from_events(agent, [train.OSCILLATION]), 0.0)
-
-        agent.reward_mode = "shaped"
-        self.assertAlmostEqual(train.reward_from_events(agent, [train.OSCILLATION]), -0.5)
-
-
-    def test_f5_adds_oscillation_event_for_immediate_reversal(self):
-        """Reward Test S: F5 detects immediate reversal of the previous movement action."""
-        cases = [
-            ("DOWN", "UP", (3, 2)),
-            ("UP", "DOWN", (3, 4)),
-            ("RIGHT", "LEFT", (2, 3)),
-            ("LEFT", "RIGHT", (4, 3))
-        ]
-
-        for previous_action, current_action, new_position in cases:
-            with self.subTest(previous_action=previous_action, current_action=current_action):
-                old_state = self._game_state()
-                new_state = self._game_state()
-
-                old_state["coins"] = []
-                new_state["coins"] = []
-
-                old_state["self"] = ("player", 0, True, (3, 3))
-                new_state["self"] = ("player", 0, True, new_position) 
-                new_state["step"] = 2
-
-                cached_state = state_to_features(old_state, "f5", previous_action=previous_action)
-
-                agent = SimpleNamespace(
-                    model=Mock(),
-                    logger=Mock(),
-                    transitions=[],
-                    feature_mode="f5",
-                    cached_features=cached_state
-                )
-
-                events = []
-
-                with patch.object(train, "reward_from_events", return_value=0.0), \
-            patch.object(train, "select_action", return_value="WAIT"):
-                    train.game_events_occurred(agent, old_state, current_action, new_state, events)
-
-                self.assertIn(train.OSCILLATION, events)
-
-
-    def test_f5_does_not_add_oscillation_event_for_non_reversal(self):
-        """Reward Test T: F5 does not penalize movement that is not an immediate reversal."""
-        cases = [
-            ("RIGHT", "RIGHT", (4, 3)),
-            ("RIGHT", "UP", (3, 2)),
-            ("UP", "LEFT", (2, 3))
-        ]
-
-        for previous_action, current_action, new_position in cases:
-            with self.subTest(previous_action=previous_action, current_action=current_action):
-                old_state = self._game_state()
-                new_state = self._game_state()
-
-                old_state["coins"] = []
-                new_state["coins"] = []
-
-                old_state["self"] = ("player", 0, True, (3, 3))
-                new_state["self"] = ("player", 0, True, new_position) 
-                new_state["step"] = 2
-
-                cached_state = state_to_features(old_state, "f5", previous_action=previous_action)
-
-                agent = SimpleNamespace(
-                    model=Mock(),
-                    logger=Mock(),
-                    transitions=[],
-                    feature_mode="f5",
-                    cached_features=cached_state
-                )
-
-                events = []
-
-                with patch.object(train, "reward_from_events", return_value=0.0), \
-                    patch.object(train, "select_action", return_value="WAIT"):
-                    train.game_events_occurred(agent, old_state, current_action, new_state, events)
-
-                self.assertNotIn(train.OSCILLATION, events)
-
-
-    def test_f5_does_not_add_oscillation_after_non_movement_action(self):
-        """Reward Test U: WAIT, BOMB, or no history cannot trigger movement reversal."""
-        for previous_action in [None, "WAIT", "BOMB"]:
-            with self.subTest(previous_action=previous_action):
-                old_state = self._game_state()
-                new_state = self._game_state()
-
-                old_state["coins"] = []
-                new_state["coins"] = []
-
-                old_state["self"] = ("player", 0, True, (3, 3))
-                new_state["self"] = ("player", 0, True, (3, 2)) 
-                new_state["step"] = 2
-
-                cached_state = state_to_features(old_state, "f5", previous_action=previous_action)
-
-                agent = SimpleNamespace(
-                    model=Mock(),
-                    logger=Mock(),
-                    transitions=[],
-                    feature_mode="f5",
-                    cached_features=cached_state
-                )
-
-                events = []
-
-                with patch.object(train, "reward_from_events", return_value=0.0), \
-                    patch.object(train, "select_action", return_value="WAIT"):
-                    train.game_events_occurred(agent, old_state, "UP", new_state, events)
-
-                self.assertNotIn(train.OSCILLATION, events)
-
-
-    def test_f5_does_not_penalize_reversal_in_bomb_danger(self):
-        """Reward Test V: Emergency movement reversal is not penalized while escaping bomb danger."""
-        old_state = self._game_state()
-        new_state = self._game_state()
-
-        old_state["coins"] = []
-        new_state["coins"] = []
-
-        old_state["self"] = ("player", 0, False, (3, 3))
-        old_state["bombs"] = [((3, 5), 3)]
-
-        new_state["self"] = ("player", 0, False, (3, 2))
-        new_state["bombs"] = [((3, 5), 2)]
-        new_state["step"] = 2
-
-        cached_state = state_to_features(old_state, "f5", previous_action="DOWN")
-
-        agent = SimpleNamespace(
-            model=Mock(),
-            logger=Mock(),
-            transitions=[],
-            feature_mode="f5",
-            cached_features=cached_state
-        )
-
-        events = []
-
-        with patch.object(train, "reward_from_events", return_value=0.0), \
-            patch.object(train, "select_action", return_value="WAIT"):
-            train.game_events_occurred(agent, old_state, "UP", new_state, events)
-
-        self.assertNotIn(train.OSCILLATION, events)
-
-
-    def test_f4_does_not_add_f5_oscillation_event(self):
-        """Reward Test W: F4 remains unaffected by F5 anti-oscillation shaping."""
-        old_state = self._game_state()
-        new_state = self._game_state()
-
-        old_state["coins"] = []
-        new_state["coins"] = []
-
-        old_state["self"] = ("player", 0, True, (3, 3))
-        new_state["self"] = ("player", 0, True, (3, 2))
-        new_state["step"] = 2
-
-        agent = SimpleNamespace(
-            model=Mock(),
-            logger=Mock(),
-            transitions=[],
-            feature_mode="f4",
-        )
-
-        events = []
-
-        with patch.object(train, "reward_from_events", return_value=0.0), \
-            patch.object(train, "select_action", return_value="WAIT"):
-            train.game_events_occurred(agent, old_state, "UP", new_state, events)
-
-        self.assertNotIn(train.OSCILLATION, events)
 
 
     def test_shortest_path_direction_right(self):
@@ -1775,113 +1654,3 @@ class LinearSARSAAgentTest(unittest.TestCase):
 
         # Then: the crate should not be reachable by the blast
         assert not callbacks.bomb_would_destroy_crate(field, start)
-
-
-    def test_f5_act_caches_features_and_tracks_exploratory_action(self):
-        """F5 Cache Test A: Exploration must still update action history for the next state."""
-        agent = SimpleNamespace(
-            train=True,
-            epsilon=1.0,
-            model=Mock(),
-            logger=Mock(),
-            feature_mode="f5",
-            actions=callbacks.actions_for_feature_mode("f5"),
-            rng=Mock(),
-            feature_previous_action=None,
-            cached_features=None
-        )
-
-        agent.rng.random.return_value = 0.0
-        agent.rng.choice.side_effect = ["RIGHT", "LEFT"]
-
-        first_state = self._game_state()
-        first_action = callbacks.act(agent, first_state)
-
-        self.assertEqual(first_action, "RIGHT")
-        self.assertEqual(agent.feature_previous_action, "RIGHT")
-
-        second_state = self._game_state()
-        second_state["step"] = 2
-
-        second_action = callbacks.act(agent, second_state)
-
-        self.assertEqual(second_action, "LEFT")
-
-        # The cached state for step 2 must remember that step 1 used RIGHT.
-        np.testing.assert_array_equal(agent.cached_features[27:31], [0.0, 0.0, 0.0, 1.0])
-
-        # After choosing LEFT, LEFT becomes the history for the next state.
-        self.assertEqual(agent.feature_previous_action, "LEFT")
-
-        agent.model.predict.assert_not_called()
-
-
-    def test_f5_training_uses_cached_state_and_current_action_for_next_history(self):
-        """F5 Cache Test B: Training uses cached s_t and encodes a_t in s_(t+1)."""
-        old_state = self._game_state()
-        new_state = self._game_state()
-
-        old_state["self"] = ("player", 0, True, (3, 3))
-        new_state["self"] = ("player", 0, True, (2, 3))
-        new_state["step"] = 2
-
-        cached_state = state_to_features(old_state, "f5", previous_action="RIGHT")
-
-        agent = SimpleNamespace(
-            model=Mock(), 
-            logger=Mock(), 
-            transitions=[], 
-            feature_mode="f5", 
-            cached_features=cached_state.copy(),
-            previous_action=None,
-            last_action=None
-        )
-
-        with patch.object(train, "reward_from_events", return_value=0.0), \
-            patch.object(train, "select_action", return_value="WAIT"):
-            train.game_events_occurred(agent, old_state, "LEFT", new_state, [])
-
-        update_state, _, _, update_next_state, update_next_action = agent.model.update.call_args.args
-
-        # s_t is exactly the state cached during act().
-        np.testing.assert_array_equal(update_state, cached_state)
-        np.testing.assert_array_equal(update_state[27:31], [0.0, 0.0, 0.0, 1.0]) # previous action = RIGHT
-
-        # In s_(t+1), the action just taken becomes the previous action.
-        np.testing.assert_array_equal(update_next_state[27:31], [0.0, 0.0, 1.0, 0.0]) # current action = LEFT
-
-        self.assertEqual(update_next_action, train.ACTION_TO_INDEX["WAIT"])
-
-
-    def test_f5_terminal_update_uses_cached_state_and_resets_history(self):
-        """F5 Cache Test C: Terminal updates use the cached state and clear history."""
-        cached_state = state_to_features(self._game_state(), "f5", previous_action="DOWN")
-
-        agent = SimpleNamespace(
-            model=Mock(), 
-            logger=Mock(), 
-            epsilon=0.5,
-            epsilon_min=0.01,
-            epsilon_decay=0.99,
-            transitions=[], 
-            feature_mode="f5", 
-            actions=callbacks.actions_for_feature_mode("f5"),
-            cached_features=cached_state.copy(),
-            feature_previous_action="RIGHT",
-            previous_action="UP",
-            last_action="DOWN",
-            last_distance=1.0
-        )
-
-        with patch.object(train, "reward_from_events", return_value=0.0), \
-            patch.object(train, "select_action", return_value="WAIT"), \
-            patch("builtins.open"), patch.object(train.pickle, "dump"):
-            train.end_of_round(agent, self._game_state(), "LEFT", [])
-
-        update_state, _, _, update_next_state = agent.model.update.call_args.args
-
-        np.testing.assert_array_equal(update_state, cached_state)
-        self.assertIsNone(update_next_state)
-
-        self.assertIsNone(agent.cached_features)
-        self.assertIsNone(agent.feature_previous_action)

@@ -17,7 +17,7 @@ TASK1_ACTIONS = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'WAIT']
 TASK2_ACTIONS = TASK1_ACTIONS + ["BOMB"]
 
 EPSILON_START = 1.0
-FEATURE_SIZES = {"f0": 7, "f1": 11, "f2": 25, "f3": 26, "f4": 27, "f5": 31}
+FEATURE_SIZES = {"f0": 7, "f1": 11, "f2": 25, "f3": 26, "f4": 27, "f5": 36}
 
 BOMB_POWER = 3
 BOMB_TIMER = 4
@@ -56,9 +56,6 @@ def setup(self):
     self.logger.info(f"Feature mode: {self.feature_mode} ({self.feature_size} features)")
 
     self.actions = actions_for_feature_mode(self.feature_mode)
-
-    self.feature_previous_action = None
-    self.cached_features = None
 
     # Check if file exists
     checkpoint_exists = os.path.isfile("my-saved-model.pt")
@@ -101,13 +98,10 @@ def setup(self):
 def act(self, game_state: dict) -> str:
     """Return the pending SARSA action or select a new action."""
     if game_state["step"] == 1:
-        self.feature_previous_action = None
-        self.cached_features = None
         self.pending_action = None
 
     # Compute the features actually observed at this decision step.
-    features = state_to_features(game_state, self.feature_mode, previous_action=self.feature_previous_action)
-    self.cached_features = features.copy()
+    features = state_to_features(game_state, self.feature_mode)
 
     # Reuse the action already selected for the SARSA target.
     if self.train and getattr(self, "pending_action", None) is not None:
@@ -115,9 +109,6 @@ def act(self, game_state: dict) -> str:
         self.pending_action = None
     else:
         action = select_action(self, features)
-
-    # Update action history only after deciding which action is actually executed.
-    self.feature_previous_action = action
 
     return action
 
@@ -142,7 +133,7 @@ def select_action(self, features: np.ndarray) -> str:
     return action
 
 
-def state_to_features(game_state: dict, feature_mode: str, previous_action=None) -> np.ndarray:
+def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
     """
     Converts the game state to the input of model, i.e. a feature vector.
 
@@ -180,7 +171,9 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
     #           escape_U, escape_D, escape_L, escape_R]
     # F3: F2 + [safe_to_bomb]
     # F4: F3 + [safe_and_useful_bomb]
-    # F5: F4 + [previous_UP, previous_DOWN, previous_LEFT, previous_RIGHT]
+    # F5: F4 + [opponent_UP, opponent_DOWN, opponent_LEFT, opponent_RIGHT,
+    #           opponent_path_UP, opponent_path_DOWN, opponent_path_LEFT, opponent_path_RIGHT,
+    #           safe_and_useful_opponent_bomb]
     feature_size = FEATURE_SIZES[feature_mode]
     features = np.zeros(feature_size)
 
@@ -272,16 +265,29 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
             safe_to_bomb = bool(agent[2] and can_escape_after_bomb(field, agent[3], bombs, explosion_map))
             features[25] = float(safe_to_bomb)
 
-        # 26: safe and useful bomb
-        if feature_mode in {"f4", "f5"}:
-            features[26] = float(safe_to_bomb and bomb_would_destroy_crate(field, agent[3]))
+            # 26: safe and useful bomb
+            if feature_mode in {"f4", "f5"}:
+                features[26] = float(safe_to_bomb and bomb_would_destroy_crate(field, agent[3]))
 
-        # 27:31: previous action [UP, DOWN, LEFT, RIGHT]
-        if feature_mode in {"f5"}:
-            previous_action_to_index = {"UP": 27, "DOWN": 28, "LEFT": 29, "RIGHT": 30}
-            index = previous_action_to_index.get(previous_action)
-            if index is not None:
-                features[index] = 1.0
+                if feature_mode in {"f5"}:
+                    others = game_state.get("others", [])
+                    opponent_positions = {other[3] for other in others}
+
+                    # 27:31: adjacent opponents [UP, DOWN, LEFT, RIGHT]
+                    for i, (dx, dy) in enumerate(DIRECTIONS):
+                        nx = agent_x + dx
+                        ny = agent_y + dy
+
+                        if (nx, ny) in opponent_positions:
+                            features[27 + i] = 1.0
+
+                    # 31:35: path towards an opponent
+                    opponent_targets = opponent_approach_targets(field, others)
+                    features[31:35] = shortest_path_directions_to_any(field, agent[3], opponent_targets)
+
+                    # 35: safe and useful bomb against opponent
+                    safe_opponent_bomb = bool(agent[2]) and can_escape_after_bomb(field, agent[3], bombs, explosion_map) and bomb_would_hit_opponent(field, agent[3], opponent_positions)
+                    features[35] = float(safe_opponent_bomb)
 
     # Return the final feature vector
     return features
@@ -470,5 +476,48 @@ def bomb_would_destroy_crate(field, start):
 
             if field[nx, ny] == 1:
                 return True
+
+    return False
+
+
+def opponent_approach_targets(field, opponents):
+    """Return free tiles adjacent to any opponent."""
+    targets = set()
+
+    for opponent in opponents:
+        ox, oy = opponent[3]
+
+        for dx, dy in DIRECTIONS:
+            nx = ox + dx
+            ny = oy + dy
+
+            if 0 <= nx < field.shape[0] and 0 <= ny < field.shape[1] and field[nx, ny] == 0:
+                targets.add((nx, ny))
+
+    return targets
+
+
+def bomb_would_hit_opponent(field, start, opponent_positions):
+    """Return True if a bomb at start would hit an opponent."""
+    start_x, start_y = start
+
+    for dx, dy in DIRECTIONS:
+        for distance in range(1, BOMB_POWER + 1):
+            nx = start_x + dx * distance
+            ny = start_y + dy * distance
+
+            if not (0 <= nx < field.shape[0] and 0 <= ny < field.shape[1]):
+                break
+
+            # Stone wall blocks blast.
+            if field[nx, ny] == -1:
+                break
+
+            if (nx, ny) in opponent_positions:
+                return True
+
+            # Crate is destroyed but blocks blast behind it.
+            if field[nx, ny] == 1:
+                break
 
     return False
