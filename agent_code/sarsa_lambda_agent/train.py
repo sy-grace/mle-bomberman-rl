@@ -29,7 +29,8 @@ MOVED_TOWARDS_CRATE = "MOVED_TOWARDS_CRATE"
 MOVED_AWAY_FROM_CRATE = "MOVED_AWAY_FROM_CRATE"
 SAFE_USEFUL_BOMB_DROPPED = "SAFE_USEFUL_BOMB_DROPPED"
 
-KILLED_OPPONENT = "KILLED_OPPONENT"
+MOVED_TOWARDS_OPPONENT = "MOVED_TOWARDS_OPPONENT"
+SAFE_OPPONENT_BOMB_DROPPED = "SAFE_OPPONENT_BOMB_DROPPED"
 
 SPARSE_REWARDS = {
     e.COIN_COLLECTED: +10
@@ -40,7 +41,7 @@ BASIC_EXTRA_REWARDS = {
     e.CRATE_DESTROYED: +2,
     e.COIN_FOUND: +3,
     e.KILLED_SELF: -20,
-    e.KILLED_OPPONENT: +5,
+    e.KILLED_OPPONENT: +10,
 }
 
 SHAPING_EXTRA_REWARDS = {
@@ -53,6 +54,9 @@ SHAPING_EXTRA_REWARDS = {
     MOVED_TOWARDS_CRATE: +1,
     MOVED_AWAY_FROM_CRATE: -1,
     SAFE_USEFUL_BOMB_DROPPED: +2,
+
+    MOVED_TOWARDS_OPPONENT: +0.5,
+    SAFE_OPPONENT_BOMB_DROPPED: +2.0,
 }
 
 REWARD_CONFIGS = {
@@ -119,6 +123,36 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     # state_to_features is defined in callbacks.py
     state = state_to_features(old_game_state, self.feature_mode)
     next_state = state_to_features(new_game_state, self.feature_mode)
+
+    # Custom event: opponent hunting
+    if self.feature_mode in {"f5"}:
+        # Reward moving along the shortest path toward an opponent.
+        # F5 features 31:35 = [UP, DOWN, LEFT, RIGHT]
+        opponent_path = state[31:35]
+
+        if state[20] == 0.0 and opponent_path.any():
+            old_x, old_y = old_game_state["self"][3]
+            new_x, new_y = new_game_state["self"][3]
+
+            dx = new_x - old_x
+            dy = new_y - old_y
+
+            direction_to_index = {
+                (0, -1): 0, # UP
+                (0, 1): 1, # DOWN
+                (-1, 0): 2, # LEFT
+                (1, 0): 3 # RIGHT
+            }
+
+            moved_index = direction_to_index.get((dx, dy))
+
+            # Only reward an actual successful movement.
+            if moved_index is not None and opponent_path[moved_index] == 1.0:
+                events.append(MOVED_TOWARDS_OPPONENT)
+
+        # Reward a bomb that currently threatens an opponent and still leaves an escape route.
+        if self_action == "BOMB" and state[35] == 1.0:
+            events.append(SAFE_OPPONENT_BOMB_DROPPED)
 
     # Custom event: safe and useful bomb placement
     if self.feature_mode in {"f4", "f5"} and self_action == "BOMB" and state[26] == 1.0:

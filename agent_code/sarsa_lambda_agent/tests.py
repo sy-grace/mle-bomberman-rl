@@ -691,7 +691,7 @@ class LinearSARSAAgentTest(unittest.TestCase):
         features = state_to_features(state, "f5")
 
         self.assertEqual(features[24], 0.0)
-        
+
 
     def test_predict_returns_one_value_per_action(self):
         model = Linear_SARSAModel(input_size=7, output_size=len(callbacks.actions_for_feature_mode("f0")), seed=1)
@@ -1223,6 +1223,128 @@ class LinearSARSAAgentTest(unittest.TestCase):
 
         self.assertNotIn(train.MOVED_TOWARDS_CRATE, events)
         self.assertNotIn(train.MOVED_AWAY_FROM_CRATE, events)
+
+
+    def test_f5_adds_towards_opponent_event_for_recommended_move(self):
+        """Reward Test R: F5 rewards successful movement along the opponent path."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f5",
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        # Agent at (3, 3), opponent at (5, 3).
+        # F5 opponent path should recommend RIGHT.
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, True, (4, 3))
+
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["step"] = 2
+        
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertIn(train.MOVED_TOWARDS_OPPONENT, events)
+
+
+    def test_f5_does_not_reward_opponent_pursuit_while_in_bomb_danger(self):
+        """Reward Test S: Bomb escape takes priority over oponent pursuit."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f5",
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["self"] = ("player", 0, False, (3, 3))
+        new_state["self"] = ("player", 0, False, (4, 3))
+
+        # Bomb threatens the old position.
+        old_state["bombs"] = [((3, 5), 3)]
+        new_state["bombs"] = [((3, 5), 2)]
+
+        # Opponent path would otherwise point RIGHT.
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["step"] = 2
+        
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertNotIn(train.MOVED_TOWARDS_OPPONENT, events)
+
+
+    def test_f5_adds_safe_opponent_bomb_event(self):
+        """Reward Test T: F5 rewards a safe bomb that currently threatens an opponent."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f5",
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, False, (3, 3))
+
+        # Opponent is inside the blast range to the RIGHT.
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+
+        # State after placing the bomb.
+        new_state["bombs"] = [((3, 3), 3)]
+        new_state["step"] = 2
+        
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "BOMB", new_state, events)
+
+        self.assertIn(train.SAFE_OPPONENT_BOMB_DROPPED, events)
+
+
+    def test_shaped_reward_values_task3_events(self):
+        """Reward Test U: Verify Task 3 shaping reward values."""
+        agent = SimpleNamespace(
+            logger=Mock(),
+            reward_mode="shaped"
+        )
+
+        events = [
+            train.MOVED_TOWARDS_OPPONENT,       # +0.5
+            train.SAFE_OPPONENT_BOMB_DROPPED,   # +2
+            game_events.KILLED_OPPONENT         # +10
+        ]
+
+        reward = train.reward_from_events(agent, events)
+
+        self.assertAlmostEqual(reward, 12.5)
 
 
     def test_shortest_path_direction_right(self):
