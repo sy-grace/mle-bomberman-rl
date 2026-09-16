@@ -156,6 +156,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
     bombs = game_state["bombs"] # (x, y), timer
     coins = game_state["coins"] # x, y
     agent = game_state["self"] # name, score, bombs_left, (x, y)
+    others = game_state.get("others", [])
 
     agent_x, agent_y = agent[3]
 
@@ -244,11 +245,16 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
         features[20] = float(agent[3] in danger_tiles)
 
         # 21:25: escape direction [UP, DOWN, LEFT, RIGHT]
+        if feature_mode in {"f5"}:
+            opponent_positions = {other[3] for other in others}
+        else:
+            opponent_positions = set()
+
         safe_targets = set()
 
         for x in range(field.shape[0]):
             for y in range(field.shape[1]):
-                if field[x, y] == 0 and (x, y) not in danger_tiles:
+                if field[x, y] == 0 and (x, y) not in danger_tiles and (x, y) not in opponent_positions:
                     safe_targets.add((x, y))
 
         escape_field = field.copy()
@@ -257,12 +263,16 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
             if (bomb_x, bomb_y) != agent[3]:
                 escape_field[bomb_x, bomb_y] = -1
 
+        if feature_mode in {"f5"}:
+            for ox, oy in opponent_positions:
+                escape_field[ox, oy] = -1
+
         if features[20] == 1.0:
             features[21:25] = shortest_path_directions_to_any(escape_field, agent[3], safe_targets)
 
         # 25: safe to bomb
         if feature_mode in {"f3", "f4", "f5"}:
-            safe_to_bomb = bool(agent[2] and can_escape_after_bomb(field, agent[3], bombs, explosion_map))
+            safe_to_bomb = bool(agent[2] and can_escape_after_bomb(field, agent[3], bombs, explosion_map, blocked_positions=opponent_positions))
             features[25] = float(safe_to_bomb)
 
             # 26: safe and useful bomb
@@ -270,9 +280,6 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
                 features[26] = float(safe_to_bomb and bomb_would_destroy_crate(field, agent[3]))
 
                 if feature_mode in {"f5"}:
-                    others = game_state.get("others", [])
-                    opponent_positions = {other[3] for other in others}
-
                     # 27:31: adjacent opponents [UP, DOWN, LEFT, RIGHT]
                     for i, (dx, dy) in enumerate(DIRECTIONS):
                         nx = agent_x + dx
@@ -286,8 +293,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
                     features[31:35] = shortest_path_directions_to_any(field, agent[3], opponent_targets)
 
                     # 35: safe and useful bomb against opponent
-                    safe_opponent_bomb = bool(agent[2]) and can_escape_after_bomb(field, agent[3], bombs, explosion_map) and bomb_would_hit_opponent(field, agent[3], opponent_positions)
-                    features[35] = float(safe_opponent_bomb)
+                    features[35] = float(safe_to_bomb and bomb_would_hit_opponent(field, agent[3], opponent_positions))
 
     # Return the final feature vector
     return features
@@ -405,11 +411,15 @@ def bomb_danger_tiles(field, bombs, explosion_map=None):
     return danger_tiles
 
 
-def can_escape_after_bomb(field, start, bombs, explosion_map=None):
-    """Return True if a bomb placed at start still allows escape within BOMB_TIMER moves."""
+def can_escape_after_bomb(field, start, bombs, explosion_map=None, blocked_positions=None):
+    """
+    Return True if a bomb placed at start still allows escape within BOMB_TIMER moves.
+    blocked_positions contains temporarily occupied tiles, such as opponent positions, that cannot be used as part of an escape route.
+    """
     hypothetical_bombs = list(bombs) + [(start, BOMB_TIMER)]
     danger_tiles = bomb_danger_tiles(field, hypothetical_bombs, explosion_map)
     existing_bomb_tiles = {position for position, _ in bombs}
+    blocked_positions = set(blocked_positions or [])
 
     queue = deque([(start, 0)])
     visited = {start}
@@ -417,11 +427,11 @@ def can_escape_after_bomb(field, start, bombs, explosion_map=None):
     while queue:
         (x, y), distance = queue.popleft()
 
-        # We found a tile outside the future blast zone.
+        # A reachable tile outside the future blast zone is a valid escape.
         if distance > 0 and (x, y) not in danger_tiles:
             return True
 
-        # No more movement possible before explosion.
+        # No more movement is possible before the hypothetical bomb explodes.
         if distance >= BOMB_TIMER:
             continue
 
@@ -439,6 +449,10 @@ def can_escape_after_bomb(field, start, bombs, explosion_map=None):
 
             # Existing bombs are obstacles.
             if next_pos in existing_bomb_tiles:
+                continue
+
+            # Other agents temporarily occupy their tiles.
+            if next_pos in blocked_positions:
                 continue
 
             # After leaving the newly placed bomb tile, the agent cannot walk back onto it.

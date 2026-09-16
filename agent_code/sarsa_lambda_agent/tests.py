@@ -649,6 +649,50 @@ class LinearSARSAAgentTest(unittest.TestCase):
         self.assertEqual(features[35], 0.0)
 
 
+    def test_f5_opponent_can_block_only_bomb_escape_route(self):
+        """Feature Test AW: F5 marks bomb placement unsafe when an opponent blocks the only escape route."""
+        state = self._game_state()
+
+        field = np.full((7, 7), -1, dtype=int)
+        start = (3, 3)
+
+        # The only escape route is UP, UP, RIGHT
+        field[3, 3] = 0
+        field[3, 2] = 0
+        field[3, 1] = 0
+        field[5, 1] = 0
+
+        state["field"] = field
+        state["self"] = ("player", 0, True, start)
+        state["coins"] = []
+        state["others"] = [("enemy", 0, True, (3, 2))]
+
+        features = state_to_features(state, "f5")
+
+        # The opponent blocks the first tile of the only escape route.
+        self.assertEqual(features[25], 0.0)
+
+
+    def test_f5_escape_direction_does_not_cross_opponent(self):
+        """Feature Test AX: F5 does not recommend an escape direction occupied by an opponent."""
+        state = self._game_state()
+
+        state["coins"] = []
+        state["self"] = ("player", 0, False, (3, 3))
+        state["bombs"] = [((3, 5), 3)]
+
+        # Block all alternatives so RIGHT would normally be the only escape.
+        state["field"][3, 2] = -1
+        state["field"][2, 3] = -1
+
+        # Opponent occupies that otherwise safe RIGHT tile.
+        state["others"] = [("enemy", 0, True, (4, 3))]
+
+        features = state_to_features(state, "f5")
+
+        self.assertEqual(features[24], 0.0)
+        
+
     def test_predict_returns_one_value_per_action(self):
         model = Linear_SARSAModel(input_size=7, output_size=len(callbacks.actions_for_feature_mode("f0")), seed=1)
         features = np.ones(7)
