@@ -5,7 +5,7 @@ import pickle
 from typing import List
 
 import events as e
-from .callbacks import state_to_features
+from .callbacks import BOMB_POWER, state_to_features
 
 # This is only an example!
 Transition = namedtuple('Transition',
@@ -30,6 +30,11 @@ ESCAPED_BOMB_DANGER = "ESCAPED_BOMB_DANGER"
 MOVED_TOWARDS_CRATE = "MOVED_TOWARDS_CRATE"
 MOVED_AWAY_FROM_CRATE = "MOVED_AWAY_FROM_CRATE"
 SAFE_USEFUL_BOMB_DROPPED = "SAFE_USEFUL_BOMB_DROPPED"
+BOMB_REWARD_BASE = 1
+BOMB_REWARD_BY_CRATE_COUNT = {
+    1: 2,
+    2: 4,
+}
 
 SPARSE_REWARDS = {
     e.COIN_COLLECTED: +10
@@ -51,7 +56,7 @@ SHAPING_EXTRA_REWARDS = {
 
     MOVED_TOWARDS_CRATE: +1,
     MOVED_AWAY_FROM_CRATE: -1,
-    SAFE_USEFUL_BOMB_DROPPED: +2,
+    SAFE_USEFUL_BOMB_DROPPED: BOMB_REWARD_BASE,
 
     OSCILLATION: -0.5,
     REPEATED_INVALID_MOVE: -1.0
@@ -88,6 +93,7 @@ def setup_training(self):
     self.epsilon = getattr(self, "epsilon", EPSILON_START)
     self.epsilon_min = EPSILON_MIN
     self.epsilon_decay = EPSILON_DECAY
+    self.safe_bomb_crate_count = 0
 
     # Reward configuration
     self.reward_mode = os.getenv("REWARD_MODE", "basic").lower()
@@ -124,8 +130,14 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
         next_state = state_to_features(new_game_state, self.feature_mode)
 
     # Custom event: safe and useful bomb placement
+    self.safe_bomb_crate_count = 0
     if self.feature_mode in {"f4", "f5", "f6"} and self_action == "BOMB" and state[26] == 1.0:
         events.append(SAFE_USEFUL_BOMB_DROPPED)
+        if self.feature_mode == "f6":
+            self.safe_bomb_crate_count = min(
+                int(round(float(state[31]) * (4 * BOMB_POWER))),
+                4 * BOMB_POWER,
+            )
 
     # Bomb danger status
     old_in_danger = self.feature_mode in {"f2", "f3", "f4", "f5", "f6"} and state[20] == 1.0
@@ -266,6 +278,10 @@ def reward_from_events(self, events: List[str]) -> float:
 
     reward_sum = 0
     for event in events:
+        if event == SAFE_USEFUL_BOMB_DROPPED and self.feature_mode == "f6":
+            crate_count = getattr(self, "safe_bomb_crate_count", 0)
+            reward_sum += BOMB_REWARD_BY_CRATE_COUNT.get(crate_count, 6 if crate_count >= 3 else 0)
+            continue
         if event in game_rewards:
             reward_sum += game_rewards[event]
             
