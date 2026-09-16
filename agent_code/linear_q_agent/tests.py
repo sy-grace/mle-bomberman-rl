@@ -118,12 +118,96 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertEqual(features.shape, expected)
 
 
+    def test_f7_feature_vector_has_opponent_features(self):
+        """Feature Test F7-A: F7 adds learned opponent targeting features."""
+        state = self._game_state()
+        state["coins"] = []
+        state["others"] = [("peaceful_agent", 0, False, (3, 5))]
+
+        features = state_to_features(state, "f7")
+
+        self.assertEqual(features.shape, (41,))
+        self.assertEqual(features[40], 1.0)
+        self.assertEqual(features[33], 2 / 6)
+        self.assertTrue(features[34:38].any())
+
+
+    def test_f7_marks_safe_opponent_bomb(self):
+        """Feature Test F7-B: F7 identifies a safe bomb that can hit an opponent."""
+        state = self._game_state()
+        state["coins"] = []
+        state["self"] = ("player", 0, True, (3, 3))
+        state["others"] = [("peaceful_agent", 0, False, (3, 5))]
+
+        features = state_to_features(state, "f7")
+
+        self.assertEqual(features[38], 1.0)
+        self.assertEqual(features[39], 1.0)
+
+
+    def test_f7_retains_f6_crate_yield_feature(self):
+        """Feature Test F7-E: F7 preserves F6's safe crate-yield input."""
+        state = self._game_state()
+        state["coins"] = []
+        state["field"][3, 2] = 1
+        state["self"] = ("player", 0, True, (3, 3))
+
+        f6_features = state_to_features(state, "f6")
+        f7_features = state_to_features(state, "f7")
+
+        self.assertEqual(f7_features[31], f6_features[31])
+        np.testing.assert_array_equal(f7_features[:32], f6_features)
+
+
+    def test_f7_allows_safe_opponent_bomb_without_crates(self):
+        """Feature Test F7-D: Combat bombing does not require crate yield."""
+        state = self._game_state()
+        state["coins"] = []
+        state["self"] = ("player", 0, True, (3, 3))
+        state["others"] = [("peaceful_agent", 0, False, (3, 5))]
+        features = state_to_features(state, "f7")
+
+        candidates = callbacks.action_candidates(
+            features,
+            callbacks.actions_for_feature_mode("f7"),
+            "f7",
+            position=(3, 3),
+            field=state["field"],
+            bombs=state["bombs"],
+            explosion_map=state["explosion_map"],
+        )
+
+        self.assertIn("BOMB", candidates)
+
+
     def test_f1_uses_task1_action_space(self):
         """Feature Test H: Verify that F1 uses the five Task 1 actions without BOMB."""
         actions = callbacks.actions_for_feature_mode("f1")
 
         expected = ["UP", "DOWN", "LEFT", "RIGHT", "WAIT"]
         self.assertEqual(actions, expected)
+
+
+    def test_f7_uses_task2_action_space_with_bomb(self):
+        """Feature Test F7-C: F7 keeps the six-action combat action space."""
+        self.assertEqual(callbacks.actions_for_feature_mode("f7"), callbacks.TASK2_ACTIONS)
+
+
+    def test_opponent_kill_reward_is_f7_specific(self):
+        """Reward Test F7-A: Older feature modes do not receive the combat reward."""
+        f5_agent = SimpleNamespace(
+            feature_mode="f5",
+            reward_mode="shaped",
+            logger=Mock(),
+        )
+        f7_agent = SimpleNamespace(
+            feature_mode="f7",
+            reward_mode="shaped",
+            logger=Mock(),
+        )
+
+        self.assertEqual(train.reward_from_events(f5_agent, [game_events.KILLED_OPPONENT]), 0)
+        self.assertEqual(train.reward_from_events(f7_agent, [game_events.KILLED_OPPONENT]), 10)
 
 
     def test_f2_uses_task2_action_space_with_bomb(self):
@@ -729,6 +813,18 @@ class LinearQAgentTest(unittest.TestCase):
 
         self.assertNotIn("BOMB", candidates)
 
+    def test_opponent_bomb_target_is_reachable(self):
+        state = self._game_state()
+        state["field"][3, 4] = 0
+        targets = callbacks.opponent_bomb_targets(state["field"], [(3, 5)])
+        self.assertIn((3, 4), targets)
+        self.assertTrue(callbacks.bomb_would_hit_opponent(state["field"], (3, 4), (3, 5)))
+
+    def test_opponent_bomb_target_respects_crates(self):
+        state = self._game_state()
+        state["field"][3, 4] = 1
+        self.assertFalse(callbacks.bomb_would_hit_opponent(state["field"], (3, 3), (3, 5)))
+
 
     def test_f6_rejects_blocked_moves_and_immediate_reversal(self):
         """F6 Action Test B: F6 avoids known invalid and oscillating moves."""
@@ -887,6 +983,62 @@ class LinearQAgentTest(unittest.TestCase):
 
         self.assertIn("LEFT", candidates)
         self.assertIn("RIGHT", candidates)
+
+
+    def test_f7_danger_does_not_backtrack_toward_active_bomb(self):
+        """F7 Escape Test F: Danger mode avoids reversing toward the bomb."""
+        state = self._game_state()
+        state["coins"] = []
+        state["self"] = ("player", 0, False, (3, 4))
+        state["bombs"] = [((3, 2), 2)]
+        features = state_to_features(state, "f7")
+
+        candidates = callbacks.action_candidates(
+            features,
+            callbacks.actions_for_feature_mode("f7"),
+            "f7",
+            position=(3, 4),
+            field=state["field"],
+            bombs=state["bombs"],
+            explosion_map=state["explosion_map"],
+        )
+
+        self.assertNotIn("UP", candidates)
+
+
+    def test_f7_danger_prefers_perpendicular_exit_from_blast_corridor(self):
+        """F7 Escape Test G: A bomb corridor is exited sideways when possible."""
+        state = self._game_state()
+        state["coins"] = []
+        state["self"] = ("player", 0, False, (3, 4))
+        state["bombs"] = [((3, 2), 1)]
+        features = state_to_features(state, "f7")
+
+        candidates = callbacks.action_candidates(
+            features,
+            callbacks.actions_for_feature_mode("f7"),
+            "f7",
+            position=(3, 4),
+            field=state["field"],
+            bombs=state["bombs"],
+            explosion_map=state["explosion_map"],
+        )
+
+        self.assertTrue(set(candidates).issubset({"LEFT", "RIGHT"}))
+
+
+    def test_escape_path_reaches_safety_before_bomb_explodes(self):
+        """F7 Escape Test H: The planned escape path ends outside the blast."""
+        state = self._game_state()
+        path = callbacks.escape_path(
+            state["field"],
+            (3, 3),
+            [((3, 3), callbacks.BOMB_TIMER)],
+            state["explosion_map"],
+        )
+
+        self.assertTrue(path)
+        self.assertLessEqual(len(path), callbacks.BOMB_TIMER)
 
 
     def test_f6_prioritizes_visible_coin_path(self):
