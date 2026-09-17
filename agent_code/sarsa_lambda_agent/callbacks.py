@@ -158,6 +158,15 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
     agent = game_state["self"] # name, score, bombs_left, (x, y)
     others = game_state.get("others", [])
 
+    explosion_map = game_state.get("explosion_map")
+
+    # Navigation field:
+    # F5 must never regard an active explosion tile as safely walkable.
+    navigation_field = field.copy()
+
+    if feature_mode in {"f5"} and explosion_map is not None:
+        navigation_field[explosion_map > 0] = -1
+
     agent_x, agent_y = agent[3]
 
     field_x, field_y = field.shape
@@ -181,11 +190,11 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
     # Set bias as 1
     features[0] = 1
 
-    # Check the obstacle location around the agent
-    UP = field[agent_x, agent_y - 1]
-    DOWN = field[agent_x, agent_y + 1]
-    LEFT = field[agent_x - 1, agent_y]
-    RIGHT = field[agent_x + 1, agent_y]
+    # Check the walkable locations around the agent
+    UP = navigation_field[agent_x, agent_y - 1]
+    DOWN = navigation_field[agent_x, agent_y + 1]
+    LEFT = navigation_field[agent_x - 1, agent_y]
+    RIGHT = navigation_field[agent_x + 1, agent_y]
 
     if UP == 0:
         features[1] = 1
@@ -218,8 +227,10 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
                 closest_distance = manhattan_distance
                 closest_coin = coin
 
+        path_field = navigation_field if feature_mode in {"f5"} else field
+
         if closest_coin is not None and feature_mode in {"f1", "f2", "f3", "f4", "f5"}:
-            path_directions = shortest_path_directions(field, agent[3], closest_coin)
+            path_directions = shortest_path_directions(path_field, agent[3], closest_coin)
             features[7:11] = path_directions
 
     if feature_mode in {"f2", "f3", "f4", "f5"}:
@@ -235,11 +246,9 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
                 features[12 + i] = 1.0
 
         # 16:20: path to crates [UP, DOWN, LEFT, RIGHT]
-        crate_targets = crate_placement_targets(field)
-        features[16:20] = shortest_path_directions_to_any(field, agent[3], crate_targets)
-
-        # 20: bomb_danger
-        explosion_map = game_state.get("explosion_map")
+        crate_path_field = navigation_field if feature_mode in {"f5"} else field
+        crate_targets = crate_placement_targets(crate_path_field)
+        features[16:20] = shortest_path_directions_to_any(crate_path_field, agent[3], crate_targets)
 
         danger_tiles = bomb_danger_tiles(field, bombs, explosion_map)
         features[20] = float(agent[3] in danger_tiles)
@@ -257,7 +266,10 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
                 if field[x, y] == 0 and (x, y) not in danger_tiles and (x, y) not in opponent_positions:
                     safe_targets.add((x, y))
 
-        escape_field = field.copy()
+        if feature_mode in {"f5"}:
+            escape_field = crate_path_field.copy()
+        else:
+            escape_field = field.copy()
 
         for (bomb_x, bomb_y), _ in bombs:
             if (bomb_x, bomb_y) != agent[3]:
@@ -289,8 +301,9 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
                             features[27 + i] = 1.0
 
                     # 31:35: path towards an opponent
-                    opponent_targets = opponent_approach_targets(field, others)
-                    features[31:35] = shortest_path_directions_to_any(field, agent[3], opponent_targets)
+                    oponent_path_field = navigation_field if feature_mode in {"f5"} else field
+                    opponent_targets = opponent_approach_targets(oponent_path_field, others)
+                    features[31:35] = shortest_path_directions_to_any(oponent_path_field, agent[3], opponent_targets)
 
                     # 35: safe and useful bomb against opponent
                     features[35] = float(safe_to_bomb and bomb_would_hit_opponent(field, agent[3], opponent_positions))
@@ -529,9 +542,5 @@ def bomb_would_hit_opponent(field, start, opponent_positions):
 
             if (nx, ny) in opponent_positions:
                 return True
-
-            # Crate is destroyed but blocks blast behind it.
-            if field[nx, ny] == 1:
-                break
 
     return False

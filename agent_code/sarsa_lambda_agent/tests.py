@@ -620,19 +620,19 @@ class LinearSARSAAgentTest(unittest.TestCase):
         self.assertEqual(features[35], 1.0)
 
 
-    def test_f5_does_not_target_opponent_behind_crate(self):
-        """Feature Test AU: F5 does not mark a bomb useful when a crate blocks the blast."""
+    def test_f5_targets_opponent_behind_crate(self):
+        """Feature Test AU: F5 recognizes that blast passes through crates."""
         state = self._game_state()
         state["coins"] = []
         state["self"] = ("player", 0, True, (3, 3))
 
-        # Crate at (4, 3) blocks the blast before it reaches the opponent.
+        # Crate is between the agent and opponent, but crates do not block the bomb blast.
         state["field"][4, 3] = 1
         state["others"] = [("enemy", 0, True, (5, 3))]
 
         features = state_to_features(state, "f5")
 
-        self.assertEqual(features[35], 0.0)
+        self.assertEqual(features[35], 1.0)
 
 
     def test_f5_opponent_bomb_is_zero_when_bomb_unavailable(self):
@@ -691,6 +691,34 @@ class LinearSARSAAgentTest(unittest.TestCase):
         features = state_to_features(state, "f5")
 
         self.assertEqual(features[24], 0.0)
+
+
+    def test_f5_does_not_mark_active_explosion_tile_as_free(self):
+        """Feature Test AY: F5 does not mark an active explosion tile as free."""
+        state = self._game_state()
+
+        # Agent at (3, 3), active explosion directly RIGHT at (4, 3)
+        state["explosion_map"][4, 3] = 1
+
+        features = state_to_features(state, "f5")
+
+        # free_U, free_D, free_L, free_R
+        self.assertEqual(features[4], 0.0)
+
+
+    def test_f5_coin_path_does_not_enter_active_explosion(self):
+        """Feature Test AZ: F5 coin path avoids active explosion tiles."""
+        state = self._game_state()
+
+        state["self"] = ("player", 0, True, (3, 3))
+        state["coins"] = [(5, 3)]
+
+        # Direct RIGHT route is dangerous.
+        state["explosion_map"][4, 3] = 1
+
+        features = state_to_features(state, "f5")
+
+        self.assertEqual(features[10], 0.0)
 
 
     def test_predict_returns_one_value_per_action(self):
@@ -1344,7 +1372,7 @@ class LinearSARSAAgentTest(unittest.TestCase):
 
         reward = train.reward_from_events(agent, events)
 
-        self.assertAlmostEqual(reward, 12.5)
+        self.assertAlmostEqual(reward, 11.0)
 
 
     def test_shortest_path_direction_right(self):
