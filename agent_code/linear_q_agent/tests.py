@@ -180,6 +180,78 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertIn("BOMB", candidates)
 
 
+    def test_f7_marks_adjacent_opponent_tile_as_blocked(self):
+        """Feature Test F7-F: Opponent-occupied tiles are not valid movement tiles."""
+        state = self._game_state()
+        state["coins"] = []
+        state["others"] = [("rule_based_agent", 0, True, (4, 3))]
+
+        features = state_to_features(state, "f7")
+
+        self.assertEqual(features[4], 0.0) # RIGHT is occupied by the opponent.
+
+
+    def test_f7_paths_around_opponent_occupied_tiles(self):
+        """Feature Test F7-G: Shortest-path features do not route through opponents."""
+        state = self._game_state()
+        state["self"] = ("player", 0, True, (2, 3))
+        state["coins"] = [(4, 3)]
+        state["others"] = [("rule_based_agent", 0, True, (3, 3))]
+
+        features = state_to_features(state, "f7")
+
+        self.assertEqual(features[10], 0.0) # RIGHT would collide with the opponent.
+        self.assertTrue(features[7] == 1.0 or features[8] == 1.0)
+
+
+    def test_f7_action_candidates_reject_opponent_collision(self):
+        """F7 Action Test A: F7 never deliberately steps onto an occupied opponent tile."""
+        features = np.zeros(callbacks.FEATURE_SIZES["f7"])
+        features[1:5] = 1.0
+
+        candidates = callbacks.action_candidates(
+            features,
+            callbacks.actions_for_feature_mode("f7"),
+            "f7",
+            position=(3, 3),
+            opponent_positions=[(4, 3)],
+        )
+
+        self.assertNotIn("RIGHT", candidates)
+
+
+    def test_f7_prioritizes_coins_over_opponent_route(self):
+        """F7 should collect a visible coin before pursuing a combat route."""
+        features = np.zeros(callbacks.FEATURE_SIZES["f7"])
+        features[1:5] = 1.0
+        features[7:11] = [0.0, 0.0, 0.0, 1.0]  # Coin is to the RIGHT.
+        features[34:38] = [1.0, 0.0, 0.0, 0.0]  # Opponent route is UP.
+
+        candidates = callbacks.action_candidates(
+            features,
+            callbacks.actions_for_feature_mode("f7"),
+            "f7",
+            position=(3, 3),
+        )
+
+        self.assertEqual(candidates, ["RIGHT"])
+
+
+    def test_f7_does_not_mark_opponent_blocked_escape_as_safe(self):
+        """Bomb safety must not rely on an escape path through an opponent."""
+        field = np.full((7, 7), -1, dtype=int)
+        field[1:-1, 1:-1] = 0
+
+        self.assertFalse(
+            callbacks.can_escape_after_bomb(
+                field,
+                (3, 3),
+                [],
+                blocked_positions={(3, 2), (3, 4), (2, 3), (4, 3)},
+            )
+        )
+
+
     def test_f1_uses_task1_action_space(self):
         """Feature Test H: Verify that F1 uses the five Task 1 actions without BOMB."""
         actions = callbacks.actions_for_feature_mode("f1")
