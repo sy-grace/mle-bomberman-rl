@@ -57,6 +57,9 @@ def setup(self):
 
     self.actions = actions_for_feature_mode(self.feature_mode)
 
+    # Persistent escape controller
+    self.escape_bomb_position = None
+
     # Check if file exists
     checkpoint_exists = os.path.isfile("my-saved-model.pt")
 
@@ -99,6 +102,7 @@ def act(self, game_state: dict) -> str:
     """Return the pending SARSA action or select a new action."""
     if game_state["step"] == 1:
         self.pending_action = None
+        self.escape_bomb_position = None
 
     # Compute the features actually observed at this decision step.
     features = state_to_features(game_state, self.feature_mode)
@@ -108,29 +112,50 @@ def act(self, game_state: dict) -> str:
         action = self.pending_action
         self.pending_action = None
     else:
-        action = select_action(self, features)
+        action = select_action(self, features, game_state)
 
     return action
 
 
-def select_action(self, features: np.ndarray) -> str:
-    """Select an action according to the current epsilon-greedy policy."""
-    # Exploration during training
+def select_action(self, features: np.ndarray, game_state=None) -> str:
+    """Select an action using the escpae controller first, then the SARSA policy."""
+    if self.feature_mode in {"f5"} and game_state is not None:
+        escape_action = persistent_escape_action(self, game_state, features)
+
+        if escape_action is not None:
+            return escape_action
+
+    action = policy_action(self, features)
+
+    # If the policy decides to place a valid bomb, remember its position.
+    # The bomb will appear in the next game state.
+    if self.feature_mode in {"f5"} and game_state is not None and action == "BOMB" and game_state["self"][2]:
+        self.escape_bomb_position = game_state["self"][3]
+
+    return action
+
+
+def policy_action(self, features: np.ndarray, allowed_actions=None) -> str:
+    """Select an epsilon-greedy SARSA action, optionally from a restricted action set."""
+    allowed_actions = list(allowed_actions or self.actions)
+
+    if not allowed_actions:
+        return "WAIT"
+
+    # Exploration
     if self.train and self.rng.random() < self.epsilon:
         self.logger.debug("Choosing action purely at random.")
-        action = self.rng.choice(self.actions)
+        return self.rng.choice(allowed_actions)
 
     # Exploitation
-    else:
-        q_values = self.model.predict(features)
+    q_values = self.model.predict(features)
 
-        # Choose action with the highest Q-value
-        action_index = int(np.argmax(q_values))
-        action = self.actions[action_index]
+    allowed_indices = [self.actions.index(action) for action in allowed_actions]
 
-        self.logger.debug("choosing action with the highest Q-value.")
+    best_index = max(allowed_indices, key=lambda index: q_values[index])
 
-    return action
+    self.logger.debug("Choosing action with the highest Q-value.")
+    return self.actions[best_index]
 
 
 def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
@@ -600,3 +625,176 @@ def bomb_would_hit_opponent(field, start, opponent_positions):
                 return True
 
     return False
+
+
+def escape_path(field, start, bombs, explosion_map=None, blocked_positions=None):
+    """
+    Return a shortest path out of bomb danger.
+
+    Bomb timer t means that t + 1 movement actions are still possible before the bomb explodes in this environment.
+    """
+    blocked_positions = set(blocked_positions or [])
+
+    danger_tiles = bomb_danger_tiles(field, bombs, explosion_map)
+
+    relevant_deadlines = []
+
+    for bomb_position, timer in bombs:
+        bomb_danger = bomb_danger_tiles(field, [(bomb_position, timer)])
+
+        if start in bomb_danger:
+            # The environment executes the action first. A bomb with timer == 0 explodes after this action.
+            relevant_deadlines.append(timer + 1)
+
+    if explosion_map is not None and explosion_map[start] > 0:
+        relevant_deadlines.append(1)
+
+    if not relevant_deadlines:
+        return []
+
+    max_distance = min(relevant_deadlines)
+
+    bomb_positions = {position for position, _timer in bombs}
+
+    offsets_to_actions = dict(zip(DIRECTIONS, ("UP", "DOWN", "LEFT", "RIGHT")))
+
+    queue = deque([(start, 0, [])])
+
+    visited = {start}
+
+    while queue:
+        (x, y), distance, path = queue.popleft()
+
+        # We have left all currently relevant blast areas.
+        if distance > 0 and (x, y) not in danger_tiles:
+            return path
+
+        if distance >= max_distance:
+            continue
+
+        for dx, dy in DIRECTIONS:
+            nx = x + dx
+            ny = y + dy
+            next_position = (nx, ny)
+
+            if not (0 <= nx < field.shape[0] and 0 <= ny < field.shape[1]):
+                continue
+
+            # Wall / crate
+            if field[nx, ny] != 0:
+                continue
+
+            # Cannot walk onto a bomb.
+            if next_position in bomb_positions:
+                continue
+
+            # Cannot walk through another agent.
+            if next_position in blocked_positions:
+                continue
+
+            # Do not enter an already active explosion.
+            if explosion_map is not None and explosion_map[nx, ny] > 0:
+                continue
+
+            if next_position in visited:
+                continue
+
+            visited.add(next_position)
+
+            queue.append((next_position, distance + 1, path + [offsets_to_actions[(dx, dy)]]))
+
+    return []
+
+
+def persistent_escape_action(self, game_state, features):
+    """Keep the agent safe from its own recently placed bomb until the bomb and its explosion are no longer dangerous."""
+    tracked_bomb = getattr(self, "escape_bomb_position", None)
+
+    if tracked_bomb is None:
+        return None
+
+    field = game_state["field"]
+    bombs = game_state.get("bombs", [])
+    explosion_map = game_state.get("explosion_map")
+    current_position = game_state["self"][3]
+
+    opponent_positions = {other[3] for other in game_state.get("others", [])}
+
+    # Blast area of the bomb that activated escape mode.
+    tracked_blast = bomb_danger_tiles(field, [(tracked_bomb, 0)], explosion_map=None)
+    bomb_still_exists = any(position == tracked_bomb for position, _timer in bombs)
+    explosion_still_active = explosion_map is not None and any(explosion_map[x, y] > 0 for x, y in tracked_blast)
+
+    # Escape mode ends only after both the bomb and its explosion disappear.
+    if not bomb_still_exists and not explosion_still_active:
+        self.escape_bomb_position = None
+        return None
+
+    # If still inside bomb danger, deterministically follow the shortest escape path.
+    current_danger = bomb_danger_tiles(field, bombs, explosion_map)
+
+    if current_position in current_danger:
+        path = escape_path(field, current_position, bombs, explosion_map, blocked_positions=opponent_positions)
+
+        if path:
+            return path[0]
+
+    # We may already have escaped the blast, but the bomb is still alive. Do not allow the learned policy to walk back into the tracked blast.
+    allowed_actions = safe_actions_during_escape(game_state, tracked_blast)
+
+    return policy_action(self, features, allowed_actions=allowed_actions)
+
+
+def safe_actions_during_escape(game_state, tracked_blast):
+    """Return actions that cannot immediately re-enter the tracked bomb blast."""
+    field = game_state["field"]
+    bombs = game_state.get("bombs", [])
+    explosion_map = game_state.get("explosion_map")
+    x, y = game_state["self"][3]
+
+    bomb_positions = {position for position, _timer in bombs}
+    opponent_positions = {other[3] for other in game_state.get("others", [])}
+
+    imminent_bombs = [(position, timer) for position, timer in bombs if timer <= 0]
+    immediate_danger = bomb_danger_tiles(field, imminent_bombs, explosion_map)
+
+    action_offsets = {
+        "UP": (0, -1),
+        "DOWN": (0, 1),
+        "LEFT": (-1, 0),
+        "RIGHT": (1, 0)
+    }
+
+    allowed = []
+
+    for action, (dx, dy) in action_offsets.items():
+        next_position = (x + dx, y + dy)
+        nx, ny = next_position
+
+        if not (0 <= nx < field.shape[0] and 0 <= ny < field.shape[1]):
+            continue
+
+        if field[nx, ny] != 0:
+            continue
+
+        if next_position in bomb_positions:
+            continue
+        
+        if next_position in opponent_positions:
+            continue
+        
+        if next_position in immediate_danger:
+            continue
+
+        if next_position in tracked_blast:
+            continue
+
+        allowed.append(action)
+
+    # Waiting is allowed only if the current tile itself is safe.
+    curernt_position = (x, y)
+
+    if curernt_position not in tracked_blast and curernt_position not in immediate_danger:
+        allowed.append("WAIT")
+
+    return allowed

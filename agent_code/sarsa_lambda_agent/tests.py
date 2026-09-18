@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 import events as game_events
 
 from . import callbacks, train
-from .callbacks import state_to_features
+from .callbacks import state_to_features, escape_path
 from .model import Linear_SARSAModel
 from .train import has_actionable_navigation_move
 
@@ -1382,14 +1382,14 @@ class LinearSARSAAgentTest(unittest.TestCase):
         )
 
         events = [
-            train.MOVED_TOWARDS_OPPONENT,       # +0.5
-            train.SAFE_OPPONENT_BOMB_DROPPED,   # +2
-            game_events.KILLED_OPPONENT         # +10
+            train.MOVED_TOWARDS_OPPONENT,       # +1.0
+            train.SAFE_OPPONENT_BOMB_DROPPED,   # +0.5
+            game_events.KILLED_OPPONENT         # +20
         ]
 
         reward = train.reward_from_events(agent, events)
 
-        self.assertAlmostEqual(reward, 11.0)
+        self.assertAlmostEqual(reward, 21.5)
 
 
     def test_shortest_path_direction_right(self):
@@ -1909,4 +1909,119 @@ class LinearSARSAAgentTest(unittest.TestCase):
         state["others"] = [("enemy", 0, True, (4, 3))
 ]
         self.assertFalse(has_actionable_navigation_move(state, features, "f5"))
-    
+
+
+    def test_escape_path_uses_last_available_action(self):
+        """Escape Path Tet A: Time 3 allows exactly four moves before explosion."""
+        field = np.full((9, 9), -1, dtype=int)
+
+        start = (4, 4)
+
+        # The only escape route requires exactly four moves. First three positions remain in the bomb's blast line.
+        field[4, 4] = 0
+        field[4, 3] = 0
+        field[4, 2] = 0
+        field[4, 1] = 0
+
+        # Fourth move leaves the blast line.
+        field[5, 1] = 0
+
+        path = escape_path(field, start, [((4, 4), 3)])
+
+        self.assertEqual(path, ["UP", "UP", "UP", "RIGHT"])
+
+
+    def test_escape_path_fails_when_deadline_is_too_short(self):
+        """Escape Path Test B: Return no path when the bomb deadline is too short."""
+        field = np.full((9, 9), -1, dtype=int)
+
+        start = (4, 4)
+
+        # The only escape route requires exactly four moves.
+        field[4, 4] = 0
+        field[4, 3] = 0
+        field[4, 2] = 0
+        field[4, 1] = 0
+        field[5, 1] = 0
+
+        path = escape_path(field, start, [((4, 4), 2)])
+
+        self.assertEqual(path, [])
+
+
+    def test_escape_controller_activates_after_bomb_selection(self):
+        """Escape Controller Test A: Selecting BOMB activates persistent escape mode."""
+        state = self._game_state()
+        state["self"] = ("player", 0, True, (3, 3))
+
+        agent = SimpleNamespace(
+            train=False,
+            feature_mode="f5",
+            actions=callbacks.actions_for_feature_mode("f5"),
+            model=Mock(),
+            logger=Mock(),
+            escape_bomb_position=None
+        )
+
+        # Make BOMB the best policy action.
+        agent.model.predict.return_value = np.array([0, 0, 0, 0, 0, 10], dtype=float)
+
+        features = state_to_features(state, "f5")
+
+        action = callbacks.select_action(agent, features, state)
+
+        self.assertEqual(action, "BOMB")
+        self.assertEqual(agent.escape_bomb_position, (3, 3))
+
+
+    def test_escape_controller_follows_escape_path(self):
+        """Escape Controller Test B: Activate escape mode overrides Q-values whiel inside bomb danger."""
+        state = self._game_state()
+
+        state["self"] = ("player", 0, True, (3, 3))
+        state["bombs"] = [((3, 3), 3)]
+
+        agent = SimpleNamespace(
+            train=False,
+            feature_mode="f5",
+            actions=callbacks.actions_for_feature_mode("f5"),
+            model=Mock(),
+            logger=Mock(),
+            escape_bomb_position=(3, 3)
+        )
+
+        # Q-values strongly prefer WAIT, but escape must take priority
+        agent.model.predict.return_value = np.array([0, 0, 0, 0, 100, 0], dtype=float)
+
+        features = state_to_features(state, "f5")
+
+        action = callbacks.select_action(agent, features, state)
+
+        self.assertNotEqual(action, "WAIT")
+
+
+    def test_escape_controller_prevents_reentering_own_blast(self):
+        """Escape Controller Test C: The agent cannot re-enter its own live bomb blast after escaping."""
+        state = self._game_state()
+
+        # Bomb is at (3, 3), agent already escaped to (4, 4).
+        state["self"] = ("player", 0, False, (4, 4))
+        state["bombs"] = [((3, 3), 1)]
+
+        agent = SimpleNamespace(
+            train=False,
+            feature_mode="f5",
+            actions=callbacks.actions_for_feature_mode("f5"),
+            model=Mock(),
+            logger=Mock(),
+            escape_bomb_position=(3, 3)
+        )
+
+        # LEFT would move to (3, 4), which lies in the bomb blast. Make LEFT overwhelmingly attractive to the learned policy.
+        agent.model.predict.return_value = np.array([0, 0, 100, 0, 1, 0], dtype=float)
+
+        features = state_to_features(state, "f5")
+
+        action = callbacks.select_action(agent, features, state)
+
+        self.assertNotEqual(action, "LEFT")

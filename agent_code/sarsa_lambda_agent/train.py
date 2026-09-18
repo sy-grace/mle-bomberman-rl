@@ -299,7 +299,7 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     reward = reward_from_events(self, events)
     action = ACTION_TO_INDEX[self_action]
 
-    next_action = select_action(self, next_state)
+    next_action = select_action(self, next_state, new_game_state)
     self.pending_action = next_action
 
     self.model.update(state, action, reward, next_state, ACTION_TO_INDEX[next_action])
@@ -333,6 +333,7 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
     self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
     self.feature_previous_action = None
     self.cached_features = None
+    self.escape_bomb_position = None
 
     # Store the model
     with open("my-saved-model.pt", "wb") as file:
