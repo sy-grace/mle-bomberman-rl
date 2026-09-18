@@ -12,6 +12,7 @@ import events as game_events
 from . import callbacks, train
 from .callbacks import state_to_features
 from .model import Linear_SARSAModel
+from .train import has_actionable_navigation_move
 
 
 @contextmanager
@@ -518,11 +519,11 @@ class LinearSARSAAgentTest(unittest.TestCase):
         self.assertEqual(features[26], 0.0) # safe_and_useful_bomb
 
 
-    def test_f5_feature_vector_has_thirty_six_features(self):
-        """Feature Test AL: Verify that F5 produces a 36-dimensional feature vector."""
+    def test_f5_feature_vector_has_thirty_eight_features(self):
+        """Feature Test AL: Verify that F5 produces a 38-dimensional feature vector."""
         state = self._game_state()
         features = state_to_features(state, "f5")
-        self.assertEqual(features.shape, (36,))
+        self.assertEqual(features.shape, (38,))
 
 
     def test_f5_preserves_all_f4_features(self):
@@ -542,14 +543,14 @@ class LinearSARSAAgentTest(unittest.TestCase):
         self.assertEqual(actions, expected)
 
 
-    def test_f5_fresh_model_uses_thirty_six_inputs_and_six_outputs(self):
-        """Feature Test AO: Fresh F5 training creates a 36-input, 6-action model."""
+    def test_f5_fresh_model_uses_thirty_eight_inputs_and_six_outputs(self):
+        """Feature Test AO: Fresh F5 training creates a 38-input, 6-action model."""
         agent = SimpleNamespace(train=True, logger=Mock())
 
         with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "FEATURE_MODE": "f5"}, clear=True):
             callbacks.setup(agent)
 
-        self.assertEqual(agent.model.input_size, 36)
+        self.assertEqual(agent.model.input_size, 38)
         self.assertEqual(agent.model.output_size, 6)
 
 
@@ -706,19 +707,35 @@ class LinearSARSAAgentTest(unittest.TestCase):
         self.assertEqual(features[4], 0.0)
 
 
-    def test_f5_coin_path_does_not_enter_active_explosion(self):
-        """Feature Test AZ: F5 coin path avoids active explosion tiles."""
+    def test_f5_bomb_urgency_increases_as_bomb_approaches_explosion(self):
+        """Feature Test AZ: F5 bomb urgency distinguishes bomb timers."""
         state = self._game_state()
-
         state["self"] = ("player", 0, True, (3, 3))
-        state["coins"] = [(5, 3)]
 
-        # Direct RIGHT route is dangerous.
-        state["explosion_map"][4, 3] = 1
+        state["bombs"] = [((3, 5), 3)]
+        features = state_to_features(state, "f5")
+        self.assertAlmostEqual(features[36], 0.25)
+
+        state["bombs"] = [((3, 5), 1)]
+        features = state_to_features(state, "f5")
+        self.assertAlmostEqual(features[36], 0.75)
+
+        state["bombs"] = [((3, 5), 0)]
+        features = state_to_features(state, "f5")
+        self.assertAlmostEqual(features[36], 1.0)
+
+
+    def test_f5_bomb_urgency_respects_stone_wall(self):
+        """Feature Test BA: Stone walls block bomb danger urgency."""
+        state = self._game_state()
+        state["self"] = ("player", 0, True, (3, 3))
+
+        state["bombs"] = [((3, 5), 0)]
+        state["field"][3, 4] = -1
 
         features = state_to_features(state, "f5")
 
-        self.assertEqual(features[10], 0.0)
+        self.assertEqual(features[36], 0.0)
 
 
     def test_predict_returns_one_value_per_action(self):
@@ -1848,3 +1865,48 @@ class LinearSARSAAgentTest(unittest.TestCase):
 
         # Then: the crate should not be reachable by the blast
         assert not callbacks.bomb_would_destroy_crate(field, start)
+
+
+    def test_actionable_navigation_move_for_opponent_path(self):
+        """Wait Actionability Test A: Opponent path with a free next tile is actionable."""
+        state = self._game_state()
+        features = np.zeros(38)
+
+        state["self"] = ("player", 0, True, (3, 3))
+
+        # RIGHT opponent path
+        features[34] = 1.0
+
+        self.assertTrue(has_actionable_navigation_move(state, features, "f5"))
+
+
+    def test_navigation_move_blocked_by_bomb_is_not_actionable(self):
+        """Wait Actionability Test B: Opponent path blocked by a bomb is not actionable."""
+        state = self._game_state()
+        features = np.zeros(38)
+
+        state["self"] = ("player", 0, True, (3, 3))
+
+        # RIGHT opponent path
+        features[34] = 1.0
+
+        # Bomb blocks RIGHT tile
+        state["bombs"] = [((4, 3), 3)]
+
+        self.assertFalse(has_actionable_navigation_move(state, features, "f5"))
+
+
+    def test_navigation_move_blocked_by_opponent_is_not_actionable(self):
+        """Wait Actionability Test C: Opponent path blocked by another agent is not actionable."""
+        state = self._game_state()
+        features = np.zeros(38)
+
+        state["self"] = ("player", 0, True, (3, 3))
+
+        # RIGHT opponent path
+        features[34] = 1.0
+
+        state["others"] = [("enemy", 0, True, (4, 3))
+]
+        self.assertFalse(has_actionable_navigation_move(state, features, "f5"))
+    

@@ -5,7 +5,7 @@ import pickle
 from typing import List
 
 import events as e
-from .callbacks import state_to_features, select_action
+from .callbacks import state_to_features, select_action, DIRECTIONS, bomb_danger_tiles
 
 # This is only an example!
 Transition = namedtuple('Transition',
@@ -41,7 +41,7 @@ BASIC_EXTRA_REWARDS = {
     e.CRATE_DESTROYED: +2,
     e.COIN_FOUND: +3,
     e.KILLED_SELF: -20,
-    e.KILLED_OPPONENT: +10,
+    e.KILLED_OPPONENT: +20,
 }
 
 SHAPING_EXTRA_REWARDS = {
@@ -55,7 +55,7 @@ SHAPING_EXTRA_REWARDS = {
     MOVED_AWAY_FROM_CRATE: -1,
     SAFE_USEFUL_BOMB_DROPPED: +2,
 
-    MOVED_TOWARDS_OPPONENT: +0.5,
+    MOVED_TOWARDS_OPPONENT: +1.0,
     SAFE_OPPONENT_BOMB_DROPPED: +0.5,
 }
 
@@ -73,6 +73,86 @@ ACTION_TO_INDEX = {
     "WAIT": 4,
     "BOMB": 5,
 }
+
+
+def has_actionable_navigation_move(game_state, state, feature_mode):
+    """Return True if at least one currently relevant navigation path points to a tile that the agent can actually enter now."""
+    if game_state is None:
+        return False
+
+    path_vectors = []
+
+    # Coin navigation
+    coin_path = state[7:11]
+    if coin_path.any():
+        path_vectors.append(coin_path)
+
+    # Crate navigation is used only when no visible coin exists, matching the existing crate reward shaping.
+    if feature_mode in {"f2", "f3", "f4", "f5"} and not game_state["coins"]:
+        crate_path = state[16:20]
+
+        if crate_path.any():
+            path_vectors.append(crate_path)
+
+    # Opponent hunting
+    if feature_mode in {"f5"}:
+        opponent_path = state[31:35]
+
+        if opponent_path.any():
+            path_vectors.append(opponent_path)
+
+        if not path_vectors:
+            return False
+
+    field = game_state["field"]
+    explosion_map = game_state.get("explosion_map")
+    x, y = game_state["self"][3]
+
+    bomb_positions = {position for position, _ in game_state.get("bombs", [])}
+
+    opponent_positions = {other[3] for other in game_state.get("others", [])}
+
+    # Tiles that are lethal during this action: currently active explosions; bombs with timer 0
+    imminent_bombs = [(position, timer) for position, timer in game_state.get("bombs", []) if timer <= 0]
+
+    immediate_danger_tiles = bomb_danger_tiles(field, imminent_bombs, explosion_map)
+
+    for i, (dx, dy) in enumerate(DIRECTIONS):
+
+        # No relevant navigation feature points this way.
+        if not any(path[i] == 1.0 for path in path_vectors):
+            continue
+
+        nx = x + dx
+        ny = y + dy
+        next_position = (nx, ny)
+
+        if not (0 <= nx < field.shape[0] and 0 <= ny < field.shape[1]):
+            continue
+
+        # Wall/crate
+        if field[nx, ny] != 0:
+            continue
+
+        # Active explosion
+        if explosion_map is not None and explosion_map[nx, ny] > 0:
+            continue
+
+        # Bomb occupies tile
+        if next_position in bomb_positions:
+            continue
+
+        # Opponent occupies tile
+        if next_position in opponent_positions:
+            continue
+
+        # Moving there would kill the agent during this turn.
+        if next_position in immediate_danger_tiles:
+            continue
+
+        return True
+
+    return False
 
 
 def setup_training(self):
@@ -211,8 +291,8 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
         elif new_distance > old_distance:
             events.append(MOVED_AWAY_FROM_COIN)
 
-    # Penalize unnecessary WAIT
-    if not old_in_danger and self_action == "WAIT" and old_distance > 0:
+    # Penalize  WAIT only when the agent is safe and has an immediately actionable navigation move.
+    if not old_in_danger and self_action == "WAIT" and has_actionable_navigation_move(old_game_state, state, self.feature_mode):
         events.append(UNNECESSARILY_WAITED)
 
     # Model Learn
