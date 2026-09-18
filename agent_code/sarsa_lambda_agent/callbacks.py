@@ -117,44 +117,6 @@ def act(self, game_state: dict) -> str:
     return action
 
 
-# temp
-def act(self, game_state: dict) -> str:
-    """Return the pending SARSA action or select a new action."""
-    if game_state["step"] == 1:
-        self.pending_action = None
-        self.escape_bomb_position = None
-
-    features = state_to_features(game_state, self.feature_mode)
-
-    if self.train and getattr(self, "pending_action", None) is not None:
-        action = self.pending_action
-        self.pending_action = None
-    else:
-        action = select_action(self, features, game_state)
-
-    # Temporary diagnostic logging during evaluation
-    if not self.train:
-        q_values = self.model.predict(features)
-
-        self.logger.info(
-            "STATE_DEBUG "
-            f"step={game_state['step']} "
-            f"pos={game_state['self'][3]} "
-            f"action={action} "
-            f"q={np.round(q_values, 3).tolist()} "
-            f"free={features[1:5].tolist()} "
-            f"coin_path={features[7:11].tolist()} "
-            f"crate_path={features[16:20].tolist()} "
-            f"danger={features[20]} "
-            f"escape={features[21:25].tolist()} "
-            f"opp_path={features[31:35].tolist()} "
-            f"urgency={features[36]:.2f} "
-            f"others={[other[3] for other in game_state.get('others', [])]}"
-        )
-
-    return action
-
-
 def select_action(self, features: np.ndarray, game_state=None) -> str:
     """Select an action using the escpae controller first, then the SARSA policy."""
     # F5/F6: keep persistent protection from the agent's own recently placed bomb until that bomb and its explosion have disappeared.
