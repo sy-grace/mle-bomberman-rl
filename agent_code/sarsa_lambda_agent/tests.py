@@ -738,6 +738,41 @@ class LinearSARSAAgentTest(unittest.TestCase):
         self.assertEqual(features[36], 0.0)
 
 
+    def test_f6_feature_vector_has_thirty_eight_features(self):
+        """Feature Test AL: Verify that F6 produces a 38-dimensional feature vector."""
+        state = self._game_state()
+        features = state_to_features(state, "f6")
+        self.assertEqual(features.shape, (38,))
+
+
+    def test_f6_preserves_all_f5_features(self):
+        """Feature Test AM: F6 must preserve the complete F5 representation."""
+        state = self._game_state()
+
+        f5 = state_to_features(state, "f5")
+        f6 = state_to_features(state, "f6")
+
+        np.testing.assert_array_equal(f6[:38], f5)
+
+
+    def test_f6_uses_task2_action_space_with_bomb(self):
+        """Feature Test AN: F6 uses the six Task 2 actions."""
+        actions = callbacks.actions_for_feature_mode("f6")
+        expected = ["UP", "DOWN", "LEFT", "RIGHT", "WAIT", "BOMB"]
+        self.assertEqual(actions, expected)
+
+
+    def test_f6_fresh_model_uses_thirty_eight_inputs_and_six_outputs(self):
+        """Feature Test AO: Fresh F6 training creates a 38-input, 6-action model."""
+        agent = SimpleNamespace(train=True, logger=Mock())
+
+        with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "FEATURE_MODE": "f6"}, clear=True):
+            callbacks.setup(agent)
+
+        self.assertEqual(agent.model.input_size, 38)
+        self.assertEqual(agent.model.output_size, 6)
+
+
     def test_predict_returns_one_value_per_action(self):
         model = Linear_SARSAModel(input_size=7, output_size=len(callbacks.actions_for_feature_mode("f0")), seed=1)
         features = np.ones(7)
@@ -1949,7 +1984,7 @@ class LinearSARSAAgentTest(unittest.TestCase):
         self.assertEqual(path, [])
 
 
-    def test_escape_controller_activates_after_bomb_selection(self):
+    def test_f5_escape_controller_activates_after_bomb_selection(self):
         """Escape Controller Test A: Selecting BOMB activates persistent escape mode."""
         state = self._game_state()
         state["self"] = ("player", 0, True, (3, 3))
@@ -1974,7 +2009,7 @@ class LinearSARSAAgentTest(unittest.TestCase):
         self.assertEqual(agent.escape_bomb_position, (3, 3))
 
 
-    def test_escape_controller_follows_escape_path(self):
+    def test_f5_escape_controller_follows_escape_path(self):
         """Escape Controller Test B: Activate escape mode overrides Q-values whiel inside bomb danger."""
         state = self._game_state()
 
@@ -2000,7 +2035,7 @@ class LinearSARSAAgentTest(unittest.TestCase):
         self.assertNotEqual(action, "WAIT")
 
 
-    def test_escape_controller_prevents_reentering_own_blast(self):
+    def test_f5_escape_controller_prevents_reentering_own_blast(self):
         """Escape Controller Test C: The agent cannot re-enter its own live bomb blast after escaping."""
         state = self._game_state()
 
@@ -2025,3 +2060,64 @@ class LinearSARSAAgentTest(unittest.TestCase):
         action = callbacks.select_action(agent, features, state)
 
         self.assertNotEqual(action, "LEFT")
+
+
+    def test_f6_escape_controller_avoids_untracked_bomb(self):
+        """Escape Controller Test D: F6 escapes an untracked bomb even when the policy prefers WAIT."""
+        state = self._game_state()
+        state["self"] = ("player", 0, False, (3, 3))
+
+        # An opponent/untracked bomb threatens the current position.
+        state["bombs"] = [((3, 5), 3)]
+
+        # Block UP and LEFT so RIGHT is the direct escape.
+        state["field"][3, 2] = -1
+        state["field"][2, 3] = -1
+
+        agent = SimpleNamespace(
+            train=False,
+            feature_mode="f6",
+            actions=callbacks.actions_for_feature_mode("f6"),
+            model=Mock(),
+            logger=Mock(),
+            escape_bomb_position=None
+        )
+
+        # The learned policy strongly prefers WAIT.
+        agent.model.predict.return_value = np.array([0, 0, 0, 0, 100, 0], dtype=float)
+
+        features = state_to_features(state, "f6")
+
+        action = callbacks.select_action(agent, features, state)
+
+        self.assertEqual(action, "RIGHT")
+
+
+    def test_f5_does_not_use_untracked_bomb_escape_controller(self):
+        """Escape Controller Test E: F5 remains unchanged and does not gain the F6 untracked-bomb controller."""
+        state = self._game_state()
+
+        state["coins"] = []
+        state["self"] = ("player", 0, False, (3, 3))
+        state["bombs"] = [((3, 5), 3)]
+
+        state["field"][3, 2] = -1
+        state["field"][2, 3] = -1
+
+        agent = SimpleNamespace(
+            train=False,
+            feature_mode="f5",
+            actions=callbacks.actions_for_feature_mode("f5"),
+            model=Mock(),
+            logger=Mock(),
+            escape_bomb_position=None
+        )
+
+        # Without the new F6 controller, the F5 policy still chooses WAIT
+        agent.model.predict.return_value = np.array([0, 0, 0, 0, 100, 0], dtype=float)
+
+        features = state_to_features(state, "f5")
+
+        action = callbacks.select_action(agent, features, state)
+
+        self.assertEqual(action, "WAIT")
