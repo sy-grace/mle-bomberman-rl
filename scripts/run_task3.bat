@@ -12,7 +12,8 @@ REM Add "gui" to visualize an existing trained checkpoint without
 REM running training or overwriting experiment results.
 REM
 REM Examples:
-REM   run_task3.bat sarsa_lambda_agent f5 shaped 456
+REM   run_task3.bat sarsa_lambda_agent f5 shaped 123
+REM   run_task3.bat sarsa_lambda_agent f6 shaped 456
 REM
 REM Fixed settings:
 REM   scenario=classic
@@ -36,7 +37,7 @@ if "%GUI_EVAL%"=="" set "GUI_EVAL=nogui"
 
 if /I not "%GUI_EVAL%"=="gui" if /I not "%GUI_EVAL%"=="nogui" (
     echo ERROR: GUI_EVAL must be gui or nogui.
-    echo Usage: run_task3.bat ^<agent^> ^<f5^> ^<basic^|shaped^> ^<seed^> [gui]
+    echo Usage: run_task3.bat ^<agent^> ^<f5^|f6^> ^<basic^|shaped^> ^<seed^> [gui]
     exit /b 1
 )
 
@@ -46,25 +47,25 @@ REM ------------------------------------------------------------
 
 if "%AGENT%"=="" (
     echo ERROR: AGENT is missing.
-    echo Usage: run_task3.bat ^<agent^> ^<f2^|f3^|f4^|f5^|f6^> ^<basic^|shaped^> ^<seed^>
+    echo Usage: run_task3.bat ^<agent^> ^<f5^|f6^> ^<basic^|shaped^> ^<seed^>
     exit /b 1
 )
 
 if "%FEATURE_MODE%"=="" (
     echo ERROR: FEATURE_MODE is missing.
-    echo Usage: run_task3.bat ^<agent^> ^<f2^|f3^|f4^|f5^|f6^> ^<basic^|shaped^> ^<seed^>
+    echo Usage: run_task3.bat ^<agent^> ^<f5^|f6^> ^<basic^|shaped^> ^<seed^>
     exit /b 1
 )
 
 if "%REWARD_MODE%"=="" (
     echo ERROR: REWARD_MODE is missing.
-    echo Usage: run_task3.bat ^<agent^> ^<f2^|f3^|f4^|f5^|f6^> ^<basic^|shaped^> ^<seed^>
+    echo Usage: run_task3.bat ^<agent^> ^<f5^|f6^> ^<basic^|shaped^> ^<seed^>
     exit /b 1
 )
 
 if "%EXPERIMENT_SEED%"=="" (
     echo ERROR: EXPERIMENT_SEED is missing.
-    echo Usage: run_task3.bat ^<agent^> ^<f2^|f3^|f4^|f5^|f6^> ^<basic^|shaped^> ^<seed^>
+    echo Usage: run_task3.bat ^<agent^> ^<f5^|f6^> ^<basic^|shaped^> ^<seed^>
     exit /b 1
 )
 
@@ -72,8 +73,8 @@ REM ------------------------------------------------------------
 REM Validate feature / reward modes
 REM ------------------------------------------------------------
 
-if /I not "%FEATURE_MODE%"=="f5" (
-    echo ERROR: FEATURE_MODE must be f5 for Task 3 experiments.
+if /I not "%FEATURE_MODE%"=="f5" if /I not "%FEATURE_MODE%"=="f6" (
+    echo ERROR: FEATURE_MODE must be f5 or f6 for Task 3 experiments.
     exit /b 1
 )
 
@@ -143,7 +144,7 @@ echo.
 
 python main.py play ^
     --no-gui ^
-    --agents %AGENT% ^
+    --agents %AGENT% peaceful_agent coin_collector_agent ^
     --train 1 ^
     --scenario classic ^
     --n-rounds %TRAIN_ROUNDS% ^
