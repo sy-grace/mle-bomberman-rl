@@ -194,7 +194,7 @@ echo.
 
 python main.py play ^
     --no-gui ^
-    --agents %AGENT% ^
+    --agents %AGENT% peaceful_agent coin_collector_agent ^
     --train 0 ^
     --scenario classic ^
     --n-rounds %EVAL_ROUNDS% ^
@@ -253,7 +253,7 @@ echo ============================================================
 echo.
 
 python main.py play ^
-    --agents %AGENT% ^
+    --agents %AGENT% peaceful_agent coin_collector_agent ^
     --train 0 ^
     --scenario classic ^
     --n-rounds %GUI_ROUNDS% ^
