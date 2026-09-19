@@ -222,6 +222,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
     #           opponent_path_UP, opponent_path_DOWN, opponent_path_LEFT, opponent_path_RIGHT,
     #           safe_and_useful_opponent_bomb, bomb_urgency, normalized_crate_distance]
     # F6: same 38-dimensional representation as F5 + opponent bomb avoidance controller
+    # F7: same 38-dimensional representation as F6 + hunt mode
     feature_size = FEATURE_SIZES[feature_mode]
     features = np.zeros(feature_size)
 

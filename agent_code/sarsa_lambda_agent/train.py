@@ -349,9 +349,7 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
 
 
 def reward_from_events(self, events: List[str]) -> float:
-    """
-    Here we can modify the rewards the agent get so as to en/discourage certain behavior.
-    """
+    """Modify the rewards the agent get so as to en/discourage certain behavior."""
     game_rewards = REWARD_CONFIGS[self.reward_mode]
 
     reward_sum = 0
@@ -362,3 +360,13 @@ def reward_from_events(self, events: List[str]) -> float:
     self.logger.info(f"Awarded {reward_sum} for events {', '.join(events)}")
 
     return reward_sum
+
+
+def is_hunt_mode( game_state):
+    """Return True when no currently collectable coins are visible and at least one opponent is still alive."""
+    if game_state is None:
+        return False
+
+    return len(game_state.get("coins", [])) == 0 and len(game_state.get("others", [])) > 0
+
+
