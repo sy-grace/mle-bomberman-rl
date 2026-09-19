@@ -33,6 +33,7 @@ MOVED_TOWARDS_OPPONENT = "MOVED_TOWARDS_OPPONENT"
 SAFE_OPPONENT_BOMB_DROPPED = "SAFE_OPPONENT_BOMB_DROPPED"
 MOVED_AWAY_FROM_OPPONENT = "MOVED_AWAY_FROM_OPPONENT"
 MOVED_TOWARDS_OPPONENT_HUNT = "MOVED_TOWARDS_OPPONENT_HUNT"
+SAFE_OPPONENT_BOMB_DROPPED_HUNT = "SAFE_OPPONENT_BOMB_DROPPED_HUNT"
 
 SPARSE_REWARDS = {
     e.COIN_COLLECTED: +10
@@ -61,6 +62,7 @@ SHAPING_EXTRA_REWARDS = {
     SAFE_OPPONENT_BOMB_DROPPED: +0.5,
     MOVED_AWAY_FROM_OPPONENT: -0.5,
     MOVED_TOWARDS_OPPONENT_HUNT: +3.0,
+    SAFE_OPPONENT_BOMB_DROPPED_HUNT: +1.0
 }
 
 REWARD_CONFIGS = {
@@ -239,7 +241,10 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
 
         # Reward a bomb that currently threatens an opponent and still leaves an escape route.
         if self_action == "BOMB" and state[35] == 1.0:
-            events.append(SAFE_OPPONENT_BOMB_DROPPED)
+            if self.feature_mode in {"f7"} and is_hunt_mode(old_game_state):
+                events.append(SAFE_OPPONENT_BOMB_DROPPED_HUNT)
+            else:
+                events.append(SAFE_OPPONENT_BOMB_DROPPED)
 
     # Custom event: safe and useful bomb placement
     if self.feature_mode in {"f4", "f5", "f6", "f7"} and self_action == "BOMB" and state[26] == 1.0:

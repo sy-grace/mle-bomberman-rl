@@ -1538,8 +1538,8 @@ class LinearSARSAAgentTest(unittest.TestCase):
         old_state = self._game_state()
         new_state = self._game_state()
 
-        old_state["coins"] = [(1, 1)]
-        new_state["coins"] = [(1, 1)]
+        old_state["coins"] = []
+        new_state["coins"] = []
 
         old_state["self"] = ("player", 0, True, (3, 3))
         new_state["self"] = ("player", 0, True, (4, 3))
@@ -1564,11 +1564,160 @@ class LinearSARSAAgentTest(unittest.TestCase):
             logger=Mock(),
             reward_mode="shaped"
         )
-
         reward = train.reward_from_events(agent, [train.MOVED_TOWARDS_OPPONENT_HUNT])
-
         self.assertAlmostEqual(reward, 3.0)
 
+
+    def test_f7_adds_hunt_opponent_bomb_event_in_hunt_mode(self):
+        """Reward Test Z: F7 uses the hunt-specific bomb event for a safe opponent-targeting bomb in hunt mode."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f7"
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, False, (3, 3))
+
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+
+        new_state["bombs"] = [((3, 3), 3)]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "BOMB", new_state, events)
+
+        self.assertIn(train.SAFE_OPPONENT_BOMB_DROPPED_HUNT, events)
+        self.assertNotIn(train.SAFE_OPPONENT_BOMB_DROPPED, events)
+
+
+    def test_f7_uses_normal_opponent_bomb_event_outside_hunt_mode(self):
+        """Reward Test AA: F7 keeps the normal opponent-bomb event while a visible coin exists."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f7"
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = [(1, 1)]
+        new_state["coins"] = [(1, 1)]
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, False, (3, 3))
+
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+
+        new_state["bombs"] = [((3, 3), 3)]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "BOMB", new_state, events)
+
+        self.assertIn(train.SAFE_OPPONENT_BOMB_DROPPED, events)
+        self.assertNotIn(train.SAFE_OPPONENT_BOMB_DROPPED_HUNT, events)
+
+
+    def test_f6_does_not_use_f7_hunt_opponent_bomb_event(self):
+        """Reward Test AB: F6 keeps the original opponent-bomb event under hunt-mode conditions."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f6"
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, False, (3, 3))
+
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+
+        new_state["bombs"] = [((3, 3), 3)]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "BOMB", new_state, events)
+
+        self.assertIn(train.SAFE_OPPONENT_BOMB_DROPPED, events)
+        self.assertNotIn(train.SAFE_OPPONENT_BOMB_DROPPED_HUNT, events)
+
+
+    def test_shaped_reward_values_f7_hunt_opponent_bomb(self):
+        """Reward Test AC: Hunt-mode opponent bomb placement receives the stronger shaped reward."""
+        agent = SimpleNamespace(
+            logger=Mock(),
+            reward_mode="shaped"
+        )
+        reward = train.reward_from_events(agent, [train.SAFE_OPPONENT_BOMB_DROPPED_HUNT])
+        self.assertAlmostEqual(reward, 1.0)
+
+
+    def test_f7_hunt_bomb_can_reward_crate_and_opponent_together(self):
+        """Reward Test AD: A safe hunt-mode bomb may receive both crate and opponent bomb events."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f7"
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, False, (3, 3))
+
+        # Crate is inside the blast range.
+        old_state["field"][3, 2] = 1
+        new_state["field"][3, 2] = 1
+
+        # Opponent is also inside the blast range
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+
+        new_state["bombs"] = [((3, 3), 3)]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "BOMB", new_state, events)
+
+        self.assertIn(train.SAFE_USEFUL_BOMB_DROPPED, events)
+        self.assertIn(train.SAFE_OPPONENT_BOMB_DROPPED_HUNT, events)
+    
 
     def test_shortest_path_direction_right(self):
         """Path Test A: Test that a target directly to the right returns RIGHT as the valid first step."""
