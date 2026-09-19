@@ -2283,3 +2283,50 @@ class LinearSARSAAgentTest(unittest.TestCase):
         action = callbacks.select_action(agent, features, state)
 
         self.assertEqual(action, "LEFT")
+
+
+    def test_hunt_mode_when_no_visible_coins_and_opponent_remains(self):
+        """Hunt Mode Test A: Hunt mode is active when no visible coins remain and an oponent is alive."""
+        state = self._game_state()
+
+        state["coins"] = []
+        state["others"] = [("enemy", 0, True, (5, 5))]
+
+        self.assertTrue(train.is_hunt_mode(state))
+
+
+    def test_hunt_mode_inactive_when_coin_is_visible(self):
+        """Hunt Mode Test B: Hunt mode is inactive while a collectable coin is visible."""
+        state = self._game_state()
+
+        state["coins"] = [(5, 4)]
+        state["others"] = [("enemy", 0, True, (5, 5))]
+
+        self.assertFalse(train.is_hunt_mode(state))
+
+
+    def test_hunt_mode_inactive_when_no_opponent_remains(self):
+        """Hunt Mode Test C: Hunt mode is inactive when no opponent remains in the game."""
+        state = self._game_state()
+
+        state["coins"] = []
+        state["others"] = []
+
+        self.assertFalse(train.is_hunt_mode(state))
+
+
+    def test_hunt_mode_can_active_while_crates_remain(self):
+        """Hunt Mode Test D: Remaining crates do not prevent hunt mode when no visible coins exist."""
+        state = self._game_state()
+
+        state["coins"] = []
+        state["others"] = [("enemy", 0, True, (5, 5))]
+
+        state["field"][2, 2] = 1
+
+        self.assertTrue(train.is_hunt_mode(state))
+
+
+    def test_hunt_mode_inactive_for_missing_game_state(self):
+        """Hunt Mode Test E: Hunt mode is inactive when no game state is available."""
+        self.assertFalse(train.is_hunt_mode(None))
