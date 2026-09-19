@@ -2121,3 +2121,100 @@ class LinearSARSAAgentTest(unittest.TestCase):
         action = callbacks.select_action(agent, features, state)
 
         self.assertEqual(action, "WAIT")
+        
+
+    def test_f6_does_not_move_into_timer_zero_blast(self):
+        """Escape Controller Test F: F6 must not move into a blast resolving this step."""
+        state = self._game_state()
+
+        state["coins"] = []
+        state["self"] = ("player", 0, False, (2, 3))
+
+        state["field"][3, 3] = 0
+        state["field"][3, 4] = 0
+        state["field"][3, 5] = 0
+
+        # Current position (2, 3) is safe.
+        # RIGHT -> (3, 3) enters the timer-0 bomb blast.
+        state["bombs"] = [((3, 5), 0)]
+
+
+        agent = SimpleNamespace(
+            train=False,
+            feature_mode="f6",
+            actions=callbacks.actions_for_feature_mode("f6"),
+            model=Mock(),
+            logger=Mock(),
+            escape_bomb_position=None
+        )
+
+        # RIGHT strongly preferred, LEFT second best
+        agent.model.predict.return_value = np.array([0, 0, 10, 100, 1, 0], dtype=float)
+
+        features = state_to_features(state, "f6")
+        action = callbacks.select_action(agent, features, state)
+
+        self.assertEqual(action, "LEFT")
+
+
+    def test_f6_allows_move_into_timer_one_future_blast(self):
+        """Escape Controller Test G: Timer-1 danger is not filtered one step too early."""
+        state = self._game_state()
+
+        state["coins"] = []
+        state["self"] = ("player", 0, False, (2, 3))
+
+        state["field"][3, 3] = 0
+        state["field"][3, 4] = 0
+        state["field"][3, 5] = 0
+
+        state["bombs"] = [((3, 5), 1)]
+
+
+        agent = SimpleNamespace(
+            train=False,
+            feature_mode="f6",
+            actions=callbacks.actions_for_feature_mode("f6"),
+            model=Mock(),
+            logger=Mock(),
+            escape_bomb_position=None
+        )
+
+        # RIGHT strongly preferred, LEFT second best
+        agent.model.predict.return_value = np.array([0, 0, 10, 100, 1, 0], dtype=float)
+
+        features = state_to_features(state, "f6")
+        action = callbacks.select_action(agent, features, state)
+
+        self.assertEqual(action, "RIGHT")
+
+
+    def test_f5_still_allows_policy_move_into_untracked_immediate_blast(self):
+        """Escape Controller Test H: The new destination filter is F6-only."""
+        state = self._game_state()
+
+        state["coins"] = []
+        state["self"] = ("player", 0, False, (2, 3))
+
+        state["field"][3, 3] = 0
+        state["field"][3, 4] = 0
+        state["field"][3, 5] = 0
+
+        state["bombs"] = [((3, 5), 0)]
+
+        agent = SimpleNamespace(
+            train=False,
+            feature_mode="f5",
+            actions=callbacks.actions_for_feature_mode("f5"),
+            model=Mock(),
+            logger=Mock(),
+            escape_bomb_position=None
+        )
+
+        # RIGHT strongly preferred, LEFT second best
+        agent.model.predict.return_value = np.array([0, 0, 10, 100, 1, 0], dtype=float)
+
+        features = state_to_features(state, "f5")
+        action = callbacks.select_action(agent, features, state)
+
+        self.assertEqual(action, "RIGHT")

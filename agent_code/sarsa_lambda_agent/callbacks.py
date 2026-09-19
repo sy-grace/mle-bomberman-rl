@@ -13,6 +13,13 @@ DIRECTIONS = [
     (1, 0)      # RIGHT
 ]
 
+MOVEMENT_DELTAS = {
+    "UP": (0, -1),
+    "DOWN": (0, 1),
+    "LEFT": (-1, 0),
+    "RIGHT": (1, 0)
+}
+
 TASK1_ACTIONS = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'WAIT']
 TASK2_ACTIONS = TASK1_ACTIONS + ["BOMB"]
 
@@ -132,7 +139,11 @@ def select_action(self, features: np.ndarray, game_state=None) -> str:
         if opponent_escape_action is not None:
             return opponent_escape_action
 
-    action = policy_action(self, features)
+        allowed_actions = immediate_safe_actions(game_state, self.actions)
+        action = policy_action(self, features, allowed_actions=allowed_actions)
+
+    else:
+        action = policy_action(self, features)
 
     # If the policy decides to place a valid bomb, remember its position.
     # The bomb will appear in the next game state.
@@ -766,16 +777,9 @@ def safe_actions_during_escape(game_state, tracked_blast):
     imminent_bombs = [(position, timer) for position, timer in bombs if timer <= 0]
     immediate_danger = bomb_danger_tiles(field, imminent_bombs, explosion_map)
 
-    action_offsets = {
-        "UP": (0, -1),
-        "DOWN": (0, 1),
-        "LEFT": (-1, 0),
-        "RIGHT": (1, 0)
-    }
-
     allowed = []
 
-    for action, (dx, dy) in action_offsets.items():
+    for action, (dx, dy) in MOVEMENT_DELTAS.items():
         next_position = (x + dx, y + dy)
         nx, ny = next_position
 
@@ -845,3 +849,42 @@ def opponent_bomb_aviodance_action(self, game_state, features):
 
     # No survivable movement is known.
     return "WAIT"
+
+
+def immemdiate_danger_tiles(game_state):
+    """
+    Return tiles that are lethal after the action selected for the current step.
+    Only timer-0 bombs are included because the environment lets the agent act before bomb updates.
+    A timer-1 bomb becomes timer 0 after this action and does not explode until the following step.
+    Existing dangerous explosion tiles are included through explosion_map.
+    """
+    field = game_state["field"]
+    bombs = game_state.get("bombs", [])
+    explosion_map = game_state.get("explosion_map")
+
+    immediate_bombs = [(position, timer) for position, timer in bombs if timer <= 0]
+    return bomb_danger_tiles(field, immediate_bombs, explosion_map)
+
+
+def immediate_safe_actions(game_state, actions):
+    """
+    Remove movement actions whose destination is immediately lethal.
+    WAIT and BOMB are intentionally preserved here. This filter only fixes the F6 failure mode where the 
+    current tile is safe but the selected movement enters a blast that resolves during the same step.
+    """
+    x, y = game_state["self"][3]
+    danger_tiles = immemdiate_danger_tiles(game_state)
+
+    allowed_actions = []
+
+    for action in actions:
+        if action in MOVEMENT_DELTAS:
+            dx, dy = MOVEMENT_DELTAS[action]
+            destination = (x + dx, y + dy)
+
+            if destination in danger_tiles:
+                continue
+
+        allowed_actions.append(action)
+
+    return allowed_actions
