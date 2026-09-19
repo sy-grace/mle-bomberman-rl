@@ -1462,6 +1462,114 @@ class LinearSARSAAgentTest(unittest.TestCase):
         self.assertAlmostEqual(reward, 21.5)
 
 
+    def test_f7_adds_hunt_opponent_event_when_moving_towards_opponent(self):
+        """Reward Test V: F7 uses the stronger pursuit event when moving toward an opponent in hunt mode."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f7"
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, True, (4, 3))
+
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertIn(train.MOVED_TOWARDS_OPPONENT_HUNT, events)
+        self.assertNotIn(train.MOVED_TOWARDS_OPPONENT, events)
+
+
+    def test_f7_uses_normal_opponent_event_outside_hunt_mode(self):
+        """Reward Test W: F7 keeps the normal pursuit event while a visible coin exists."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f7"
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = [(1, 1)]
+        new_state["coins"] = [(1, 1)]
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, True, (4, 3))
+
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertIn(train.MOVED_TOWARDS_OPPONENT, events)
+        self.assertNotIn(train.MOVED_TOWARDS_OPPONENT_HUNT, events)
+
+
+    def test_f6_does_not_use_f7_hunt_opponent_event(self):
+        """Reward Test X: F6 keeps its original opponent-pursuit event even under hunt-mode conditions."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f6"
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = [(1, 1)]
+        new_state["coins"] = [(1, 1)]
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, True, (4, 3))
+
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertIn(train.MOVED_TOWARDS_OPPONENT, events)
+        self.assertNotIn(train.MOVED_TOWARDS_OPPONENT_HUNT, events)
+
+
+    def test_shaped_reward_strengthens_f7_hunt_pursuit(self):
+        """Reward Test Y: Hunt-mode opponent pursuit receives the stronger shaped reward."""
+        agent = SimpleNamespace(
+            logger=Mock(),
+            reward_mode="shaped"
+        )
+
+        reward = train.reward_from_events(agent, [train.MOVED_TOWARDS_OPPONENT_HUNT])
+
+        self.assertAlmostEqual(reward, 3.0)
+
+
     def test_shortest_path_direction_right(self):
         """Path Test A: Test that a target directly to the right returns RIGHT as the valid first step."""
         state = self._game_state()
