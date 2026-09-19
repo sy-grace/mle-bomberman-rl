@@ -739,14 +739,14 @@ class LinearSARSAAgentTest(unittest.TestCase):
 
 
     def test_f6_feature_vector_has_thirty_eight_features(self):
-        """Feature Test AL: Verify that F6 produces a 38-dimensional feature vector."""
+        """Feature Test BB: Verify that F6 produces a 38-dimensional feature vector."""
         state = self._game_state()
         features = state_to_features(state, "f6")
         self.assertEqual(features.shape, (38,))
 
 
     def test_f6_preserves_all_f5_features(self):
-        """Feature Test AM: F6 must preserve the complete F5 representation."""
+        """Feature Test BC: F6 must preserve the complete F5 representation."""
         state = self._game_state()
 
         f5 = state_to_features(state, "f5")
@@ -756,17 +756,52 @@ class LinearSARSAAgentTest(unittest.TestCase):
 
 
     def test_f6_uses_task2_action_space_with_bomb(self):
-        """Feature Test AN: F6 uses the six Task 2 actions."""
+        """Feature Test BD: F6 uses the six Task 3 actions."""
         actions = callbacks.actions_for_feature_mode("f6")
         expected = ["UP", "DOWN", "LEFT", "RIGHT", "WAIT", "BOMB"]
         self.assertEqual(actions, expected)
 
 
     def test_f6_fresh_model_uses_thirty_eight_inputs_and_six_outputs(self):
-        """Feature Test AO: Fresh F6 training creates a 38-input, 6-action model."""
+        """Feature Test BE: Fresh F6 training creates a 38-input, 6-action model."""
         agent = SimpleNamespace(train=True, logger=Mock())
 
         with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "FEATURE_MODE": "f6"}, clear=True):
+            callbacks.setup(agent)
+
+        self.assertEqual(agent.model.input_size, 38)
+        self.assertEqual(agent.model.output_size, 6)
+
+
+    def test_f7_feature_vector_has_thirty_eight_features(self):
+        """Feature Test BF: Verify that F7 produces a 38-dimensional feature vector."""
+        state = self._game_state()
+        features = state_to_features(state, "f7")
+        self.assertEqual(features.shape, (38,))
+
+
+    def test_f7_preserves_all_f6_features(self):
+        """Feature Test BG: F7 must preserve the complete F6 representation."""
+        state = self._game_state()
+
+        f6 = state_to_features(state, "f6")
+        f7 = state_to_features(state, "f7")
+
+        np.testing.assert_array_equal(f7[:38], f6)
+
+
+    def test_f7_uses_task3_action_space_with_bomb(self):
+        """Feature Test BH: F7 uses the six Task 3 actions."""
+        actions = callbacks.actions_for_feature_mode("f7")
+        expected = ["UP", "DOWN", "LEFT", "RIGHT", "WAIT", "BOMB"]
+        self.assertEqual(actions, expected)
+
+
+    def test_f7_fresh_model_uses_thirty_eight_inputs_and_six_outputs(self):
+        """Feature Test BI: Fresh F7 training creates a 38-input, 6-action model."""
+        agent = SimpleNamespace(train=True, logger=Mock())
+
+        with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "FEATURE_MODE": "f7"}, clear=True):
             callbacks.setup(agent)
 
         self.assertEqual(agent.model.input_size, 38)
@@ -2121,7 +2156,7 @@ class LinearSARSAAgentTest(unittest.TestCase):
         action = callbacks.select_action(agent, features, state)
 
         self.assertEqual(action, "WAIT")
-        
+
 
     def test_f6_does_not_move_into_timer_zero_blast(self):
         """Escape Controller Test F: F6 must not move into a blast resolving this step."""
@@ -2218,3 +2253,33 @@ class LinearSARSAAgentTest(unittest.TestCase):
         action = callbacks.select_action(agent, features, state)
 
         self.assertEqual(action, "RIGHT")
+
+
+    def test_f7_inherits_f6_immediate_blast_filter(self):
+        """Escape Controller Test I: F7 inherits the F6 immediate-blast filter."""
+        state = self._game_state()
+
+        state["coins"] = []
+        state["self"] = ("player", 0, False, (2, 3))
+
+        state["field"][3, 3] = 0
+        state["field"][3, 4] = 0
+        state["field"][3, 5] = 0
+
+        state["bombs"] = [((3, 5), 0)]
+
+        agent = SimpleNamespace(
+            train=False,
+            feature_mode="f7",
+            actions=callbacks.actions_for_feature_mode("f7"),
+            model=Mock(),
+            logger=Mock(),
+            escape_bomb_position=None
+        )
+
+        agent.model.predict.return_value = np.array([0, 0, 10, 100, 1, 0], dtype=float)
+
+        features = state_to_features(state, "f7")
+        action = callbacks.select_action(agent, features, state)
+
+        self.assertEqual(action, "LEFT")

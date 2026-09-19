@@ -18,6 +18,7 @@ REM
 REM Examples:
 REM   run_task3.bat sarsa_lambda_agent f5 shaped 123
 REM   run_task3.bat sarsa_lambda_agent f6 shaped 456
+REM   run_task3.bat sarsa_lambda_agent f7 shaped 2026
 REM   run_task3.bat sarsa_lambda_agent f5 shaped 123 eval
 REM   run_task3.bat sarsa_lambda_agent f6 shaped 456 gui
 REM
@@ -45,7 +46,7 @@ if /I "%RUN_MODE%"=="nogui" set "RUN_MODE=run"
 
 if /I not "%RUN_MODE%"=="run" if /I not "%RUN_MODE%"=="eval" if /I not "%RUN_MODE%"=="gui" (
     echo ERROR: MODE must be run, eval, or gui.
-    echo Usage: run_task3.bat ^<agent^> ^<f5^|f6^> ^<basic^|shaped^> ^<seed^> [run^|eval^|gui]
+    echo Usage: run_task3.bat ^<agent^> ^<f5^|f6^|f7^> ^<basic^|shaped^> ^<seed^> [run^|eval^|gui]
     exit /b 1
 )
 
@@ -55,25 +56,25 @@ REM ------------------------------------------------------------
 
 if "%AGENT%"=="" (
     echo ERROR: AGENT is missing.
-    echo Usage: run_task3.bat ^<agent^> ^<f5^|f6^> ^<basic^|shaped^> ^<seed^> [run^|eval^|gui]
+    echo Usage: run_task3.bat ^<agent^> ^<f5^|f6^|f7^> ^<basic^|shaped^> ^<seed^> [run^|eval^|gui]
     exit /b 1
 )
 
 if "%FEATURE_MODE%"=="" (
     echo ERROR: FEATURE_MODE is missing.
-    echo Usage: run_task3.bat ^<agent^> ^<f5^|f6^> ^<basic^|shaped^> ^<seed^> [run^|eval^|gui]
+    echo Usage: run_task3.bat ^<agent^> ^<f5^|f6^|f7^> ^<basic^|shaped^> ^<seed^> [run^|eval^|gui]
     exit /b 1
 )
 
 if "%REWARD_MODE%"=="" (
     echo ERROR: REWARD_MODE is missing.
-    echo Usage: run_task3.bat ^<agent^> ^<f5^|f6^> ^<basic^|shaped^> ^<seed^> [run^|eval^|gui]
+    echo Usage: run_task3.bat ^<agent^> ^<f5^|f6^|f7^> ^<basic^|shaped^> ^<seed^> [run^|eval^|gui]
     exit /b 1
 )
 
 if "%EXPERIMENT_SEED%"=="" (
     echo ERROR: EXPERIMENT_SEED is missing.
-    echo Usage: run_task3.bat ^<agent^> ^<f5^|f6^> ^<basic^|shaped^> ^<seed^> [run^|eval^|gui]
+    echo Usage: run_task3.bat ^<agent^> ^<f5^|f6^|f7^> ^<basic^|shaped^> ^<seed^> [run^|eval^|gui]
     exit /b 1
 )
 
@@ -81,8 +82,8 @@ REM ------------------------------------------------------------
 REM Validate feature / reward modes
 REM ------------------------------------------------------------
 
-if /I not "%FEATURE_MODE%"=="f5" if /I not "%FEATURE_MODE%"=="f6" (
-    echo ERROR: FEATURE_MODE must be f5 or f6 for Task 3 experiments.
+if /I not "%FEATURE_MODE%"=="f5" if /I not "%FEATURE_MODE%"=="f6" if /I not "%FEATURE_MODE%"=="f7" (
+    echo ERROR: FEATURE_MODE must be f5, f6, or f7 for Task 3 experiments.
     exit /b 1
 )
 
