@@ -1664,6 +1664,102 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertNotIn(train.MOVED_AWAY_FROM_CRATE, events)
 
 
+    def test_f7_adds_towards_opponent_event_for_recommended_move(self):
+        """Reward Test Q2: F7 rewards successful movement along the old opponent path."""
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+        old_state["self"] = ("player", 0, True, (1, 3))
+        old_state["others"] = [("opponent", 0, True, (5, 3))]
+        new_state["self"] = ("player", 0, True, (2, 3))
+        new_state["others"] = [("opponent", 0, True, (5, 3))]
+        new_state["step"] = 2
+
+        cached_state = state_to_features(old_state, "f7")
+
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f7",
+            cached_features=cached_state,
+        )
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertIn(train.MOVED_TOWARDS_OPPONENT, events)
+        self.assertNotIn(train.MOVED_AWAY_FROM_OPPONENT, events)
+
+
+    def test_f7_adds_away_from_opponent_event_for_wrong_move(self):
+        """Reward Test Q3: F7 penalizes successful movement away from the old opponent path."""
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+        old_state["self"] = ("player", 0, True, (1, 3))
+        old_state["others"] = [("opponent", 0, True, (5, 3))]
+        new_state["self"] = ("player", 0, True, (1, 2))
+        new_state["others"] = [("opponent", 0, True, (5, 3))]
+        new_state["step"] = 2
+
+        cached_state = state_to_features(old_state, "f7")
+
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f7",
+            cached_features=cached_state,
+        )
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "UP", new_state, events)
+
+        self.assertNotIn(train.MOVED_TOWARDS_OPPONENT, events)
+        self.assertIn(train.MOVED_AWAY_FROM_OPPONENT, events)
+
+
+    def test_f7_does_not_reward_wait_when_opponent_moves_closer(self):
+        """Reward Test Q4: F7 opponent shaping depends on the agent's movement."""
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+        old_state["self"] = ("player", 0, True, (1, 3))
+        old_state["others"] = [("opponent", 0, True, (5, 3))]
+        new_state["self"] = ("player", 0, True, (1, 3))
+        new_state["others"] = [("opponent", 0, True, (4, 3))]
+        new_state["step"] = 2
+
+        cached_state = state_to_features(old_state, "f7")
+
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f7",
+            cached_features=cached_state,
+        )
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "WAIT", new_state, events)
+
+        self.assertNotIn(train.MOVED_TOWARDS_OPPONENT, events)
+        self.assertNotIn(train.MOVED_AWAY_FROM_OPPONENT, events)
+
+
     def test_shaped_reward_penalizes_oscillation(self):
         """Reward Test R: Only shaped reward assigns a penalty to oscillation."""
         agent = SimpleNamespace(logger=Mock())
