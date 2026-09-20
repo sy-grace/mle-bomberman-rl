@@ -649,8 +649,6 @@ def opponent_bomb_targets(field, opponents):
                     break
                 if field[x, y] == 0:
                     targets.add((x, y))
-                if field[x, y] == 1:
-                    break
     return targets
 
 
@@ -674,8 +672,6 @@ def bomb_would_hit_opponent(field, start, opponent):
         x = start[0] + direction[0] * step
         y = start[1] + direction[1] * step
         if field[x, y] == -1:
-            return False
-        if field[x, y] == 1 and step < distance:
             return False
     return True
 
