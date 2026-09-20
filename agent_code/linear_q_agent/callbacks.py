@@ -592,6 +592,7 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
             )
 
         if feature_mode == "f7":
+            features[40] = float(bool(opponents))
             closest_opponent = min(
                 opponents,
                 key=lambda opponent: abs(opponent[0] - agent_x) + abs(opponent[1] - agent_y),
@@ -612,7 +613,6 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
                     safe_to_bomb
                     and any(bomb_would_hit_opponent(field, agent[3], opponent) for opponent in opponents)
                 )
-                features[40] = 1.0
 
     # Return the final feature vector
     return features
