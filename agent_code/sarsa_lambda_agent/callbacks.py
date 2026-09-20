@@ -13,11 +13,18 @@ DIRECTIONS = [
     (1, 0)      # RIGHT
 ]
 
+MOVEMENT_DELTAS = {
+    "UP": (0, -1),
+    "DOWN": (0, 1),
+    "LEFT": (-1, 0),
+    "RIGHT": (1, 0)
+}
+
 TASK1_ACTIONS = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'WAIT']
 TASK2_ACTIONS = TASK1_ACTIONS + ["BOMB"]
 
 EPSILON_START = 1.0
-FEATURE_SIZES = {"f0": 7, "f1": 11, "f2": 25, "f3": 26, "f4": 27, "f5": 38}
+FEATURE_SIZES = {"f0": 7, "f1": 11, "f2": 25, "f3": 26, "f4": 27, "f5": 38, "f6": 38}
 
 BOMB_POWER = 3
 BOMB_TIMER = 4
@@ -50,7 +57,7 @@ def setup(self):
     self.feature_mode = os.getenv("FEATURE_MODE", "f1")
 
     if self.feature_mode not in FEATURE_SIZES:
-        raise ValueError("FEATURE_MODE must be one of 'f0', 'f1', 'f2', 'f3', 'f4', or 'f5'.")
+        raise ValueError("FEATURE_MODE must be one of 'f0', 'f1', 'f2', 'f3', 'f4', 'f5', or 'f6'.")
 
     self.feature_size = FEATURE_SIZES[self.feature_mode]
     self.logger.info(f"Feature mode: {self.feature_mode} ({self.feature_size} features)")
@@ -119,17 +126,28 @@ def act(self, game_state: dict) -> str:
 
 def select_action(self, features: np.ndarray, game_state=None) -> str:
     """Select an action using the escpae controller first, then the SARSA policy."""
-    if self.feature_mode in {"f5"} and game_state is not None:
+    # F5/F6: keep persistent protection from the agent's own recently placed bomb until that bomb and its explosion have disappeared.
+    if self.feature_mode in {"f5", "f6"} and game_state is not None:
         escape_action = persistent_escape_action(self, game_state, features)
 
         if escape_action is not None:
             return escape_action
 
-    action = policy_action(self, features)
+    # F6: escape bombs that are not covered by the persistent own-bomb controller. In normal play these are opponent bombs.
+    if self.feature_mode in {"f6"} and game_state is not None:
+        opponent_escape_action = opponent_bomb_aviodance_action(self, game_state, features)
+        if opponent_escape_action is not None:
+            return opponent_escape_action
+
+        allowed_actions = immediate_safe_actions(game_state, self.actions)
+        action = policy_action(self, features, allowed_actions=allowed_actions)
+
+    else:
+        action = policy_action(self, features)
 
     # If the policy decides to place a valid bomb, remember its position.
     # The bomb will appear in the next game state.
-    if self.feature_mode in {"f5"} and game_state is not None and action == "BOMB" and game_state["self"][2]:
+    if self.feature_mode in {"f5", "f6"} and game_state is not None and action == "BOMB" and game_state["self"][2]:
         self.escape_bomb_position = game_state["self"][3]
 
     return action
@@ -174,7 +192,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
         return None
 
     if feature_mode not in FEATURE_SIZES:
-        raise ValueError("feature_mode must be one of 'f0', 'f1', 'f2', 'f3', 'f4', or 'f5'.")
+        raise ValueError("feature_mode must be one of 'f0', 'f1', 'f2', 'f3', 'f4', 'f5', or 'f6'.")
 
     # Get the current location of the agent
     field = game_state["field"] # np.ndarray
@@ -202,6 +220,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
     # F5: F4 + [opponent_UP, opponent_DOWN, opponent_LEFT, opponent_RIGHT,
     #           opponent_path_UP, opponent_path_DOWN, opponent_path_LEFT, opponent_path_RIGHT,
     #           safe_and_useful_opponent_bomb, bomb_urgency, normalized_crate_distance]
+    # F6: same 38-dimensional representation as F5 + opponent bomb avoidance controller
     feature_size = FEATURE_SIZES[feature_mode]
     features = np.zeros(feature_size)
 
@@ -250,11 +269,11 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
                 closest_distance = manhattan_distance
                 closest_coin = coin
 
-        if closest_coin is not None and feature_mode in {"f1", "f2", "f3", "f4", "f5"}:
+        if closest_coin is not None and feature_mode in {"f1", "f2", "f3", "f4", "f5", "f6"}:
             path_directions = shortest_path_directions(field, agent[3], closest_coin)
             features[7:11] = path_directions
 
-    if feature_mode in {"f2", "f3", "f4", "f5"}:
+    if feature_mode in {"f2", "f3", "f4", "f5", "f6"}:
         # 11: bomb available
         features[11] = float(agent[2] > 0)
 
@@ -277,7 +296,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
         features[20] = float(agent[3] in danger_tiles)
 
         # 21:25: escape direction [UP, DOWN, LEFT, RIGHT]
-        if feature_mode in {"f5"}:
+        if feature_mode in {"f5", "f6"}:
             opponent_positions = {other[3] for other in others}
         else:
             opponent_positions = set()
@@ -295,7 +314,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
             if (bomb_x, bomb_y) != agent[3]:
                 escape_field[bomb_x, bomb_y] = -1
 
-        if feature_mode in {"f5"}:
+        if feature_mode in {"f5", "f6"}:
             for ox, oy in opponent_positions:
                 escape_field[ox, oy] = -1
 
@@ -303,15 +322,15 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
             features[21:25] = shortest_path_directions_to_any(escape_field, agent[3], safe_targets)
 
         # 25: safe to bomb
-        if feature_mode in {"f3", "f4", "f5"}:
+        if feature_mode in {"f3", "f4", "f5", "f6"}:
             safe_to_bomb = bool(agent[2] and can_escape_after_bomb(field, agent[3], bombs, explosion_map, blocked_positions=opponent_positions))
             features[25] = float(safe_to_bomb)
 
             # 26: safe and useful bomb
-            if feature_mode in {"f4", "f5"}:
+            if feature_mode in {"f4", "f5", "f6"}:
                 features[26] = float(safe_to_bomb and bomb_would_destroy_crate(field, agent[3]))
 
-                if feature_mode in {"f5"}:
+                if feature_mode in {"f5", "f6"}:
                     # 27:31: adjacent opponents [UP, DOWN, LEFT, RIGHT]
                     for i, (dx, dy) in enumerate(DIRECTIONS):
                         nx = agent_x + dx
@@ -343,7 +362,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
 
 
 def actions_for_feature_mode(feature_mode):
-    if feature_mode in {"f2", "f3", "f4", "f5"}:
+    if feature_mode in {"f2", "f3", "f4", "f5", "f6"}:
         return TASK2_ACTIONS
     return TASK1_ACTIONS
 
@@ -758,16 +777,9 @@ def safe_actions_during_escape(game_state, tracked_blast):
     imminent_bombs = [(position, timer) for position, timer in bombs if timer <= 0]
     immediate_danger = bomb_danger_tiles(field, imminent_bombs, explosion_map)
 
-    action_offsets = {
-        "UP": (0, -1),
-        "DOWN": (0, 1),
-        "LEFT": (-1, 0),
-        "RIGHT": (1, 0)
-    }
-
     allowed = []
 
-    for action, (dx, dy) in action_offsets.items():
+    for action, (dx, dy) in MOVEMENT_DELTAS.items():
         next_position = (x + dx, y + dy)
         nx, ny = next_position
 
@@ -798,3 +810,81 @@ def safe_actions_during_escape(game_state, tracked_blast):
         allowed.append("WAIT")
 
     return allowed
+
+
+def opponent_bomb_aviodance_action(self, game_state, features):
+    """
+    F6 controller for bombs not handled by the persistent own-bomb controller.
+    The framework does not expose bomb ownership in game_state, so this controller reacts 
+    to any current bomb danger when no tracked own-bomb controller has already taken over.
+    """
+    field = game_state["field"]
+    bombs = game_state.get("bombs", [])
+    explosion_map = game_state.get("explosion_map")
+    curernt_position = game_state["self"][3]
+
+    opponent_positions = {other[3] for other in game_state.get("others", [])}
+
+    current_danger = bomb_danger_tiles(field, bombs, explosion_map)
+
+    # No bomb currently threatens the agent.
+    if curernt_position not in current_danger:
+        return None
+
+    # No bomb currently threatens the agent.
+    if curernt_position not in current_danger:
+        return None
+
+    # Deterministically follow a shortest feasible escape path.
+    path = escape_path(field, curernt_position, bombs, explosion_map, blocked_positions=opponent_positions)
+
+    if path:
+        return path[0]
+
+    # No complete escape route was found. At least avoid actions that are immediately lethal in the current step.
+    allowed_actions = safe_actions_during_escape(game_state, tracked_blast=set())
+
+    if allowed_actions:
+        return policy_action(self, features, allowed_actions=allowed_actions)
+
+    # No survivable movement is known.
+    return "WAIT"
+
+
+def immemdiate_danger_tiles(game_state):
+    """
+    Return tiles that are lethal after the action selected for the current step.
+    Only timer-0 bombs are included because the environment lets the agent act before bomb updates.
+    A timer-1 bomb becomes timer 0 after this action and does not explode until the following step.
+    Existing dangerous explosion tiles are included through explosion_map.
+    """
+    field = game_state["field"]
+    bombs = game_state.get("bombs", [])
+    explosion_map = game_state.get("explosion_map")
+
+    immediate_bombs = [(position, timer) for position, timer in bombs if timer <= 0]
+    return bomb_danger_tiles(field, immediate_bombs, explosion_map)
+
+
+def immediate_safe_actions(game_state, actions):
+    """
+    Remove movement actions whose destination is immediately lethal.
+    WAIT and BOMB are intentionally preserved here. This filter only fixes the F6 failure mode where the 
+    current tile is safe but the selected movement enters a blast that resolves during the same step.
+    """
+    x, y = game_state["self"][3]
+    danger_tiles = immemdiate_danger_tiles(game_state)
+
+    allowed_actions = []
+
+    for action in actions:
+        if action in MOVEMENT_DELTAS:
+            dx, dy = MOVEMENT_DELTAS[action]
+            destination = (x + dx, y + dy)
+
+            if destination in danger_tiles:
+                continue
+
+        allowed_actions.append(action)
+
+    return allowed_actions
