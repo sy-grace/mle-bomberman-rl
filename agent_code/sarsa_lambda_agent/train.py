@@ -5,7 +5,7 @@ import pickle
 from typing import List
 
 import events as e
-from .callbacks import state_to_features, select_action
+from .callbacks import state_to_features, select_action, DIRECTIONS, bomb_danger_tiles
 
 # This is only an example!
 Transition = namedtuple('Transition',
@@ -23,12 +23,17 @@ EPSILON_DECAY = 0.99
 MOVED_TOWARDS_COIN = "MOVED_TOWARDS_COIN"
 MOVED_AWAY_FROM_COIN = "MOVED_AWAY_FROM_COIN"
 UNNECESSARILY_WAITED = "UNNECESSARILY_WAITED"
-OSCILLATION = "OSCILLATION"
 
 ESCAPED_BOMB_DANGER = "ESCAPED_BOMB_DANGER"
 MOVED_TOWARDS_CRATE = "MOVED_TOWARDS_CRATE"
 MOVED_AWAY_FROM_CRATE = "MOVED_AWAY_FROM_CRATE"
 SAFE_USEFUL_BOMB_DROPPED = "SAFE_USEFUL_BOMB_DROPPED"
+
+MOVED_TOWARDS_OPPONENT = "MOVED_TOWARDS_OPPONENT"
+SAFE_OPPONENT_BOMB_DROPPED = "SAFE_OPPONENT_BOMB_DROPPED"
+MOVED_AWAY_FROM_OPPONENT = "MOVED_AWAY_FROM_OPPONENT"
+MOVED_TOWARDS_OPPONENT_HUNT = "MOVED_TOWARDS_OPPONENT_HUNT"
+SAFE_OPPONENT_BOMB_DROPPED_HUNT = "SAFE_OPPONENT_BOMB_DROPPED_HUNT"
 
 SPARSE_REWARDS = {
     e.COIN_COLLECTED: +10
@@ -39,6 +44,7 @@ BASIC_EXTRA_REWARDS = {
     e.CRATE_DESTROYED: +2,
     e.COIN_FOUND: +3,
     e.KILLED_SELF: -20,
+    e.KILLED_OPPONENT: +20,
 }
 
 SHAPING_EXTRA_REWARDS = {
@@ -52,7 +58,11 @@ SHAPING_EXTRA_REWARDS = {
     MOVED_AWAY_FROM_CRATE: -1,
     SAFE_USEFUL_BOMB_DROPPED: +2,
 
-    OSCILLATION: -0.5
+    MOVED_TOWARDS_OPPONENT: +1.0,
+    SAFE_OPPONENT_BOMB_DROPPED: +0.5,
+    MOVED_AWAY_FROM_OPPONENT: -0.5,
+    MOVED_TOWARDS_OPPONENT_HUNT: +3.0,
+    SAFE_OPPONENT_BOMB_DROPPED_HUNT: +1.0
 }
 
 REWARD_CONFIGS = {
@@ -69,6 +79,86 @@ ACTION_TO_INDEX = {
     "WAIT": 4,
     "BOMB": 5,
 }
+
+
+def has_actionable_navigation_move(game_state, state, feature_mode):
+    """Return True if at least one currently relevant navigation path points to a tile that the agent can actually enter now."""
+    if game_state is None:
+        return False
+
+    path_vectors = []
+
+    # Coin navigation
+    coin_path = state[7:11]
+    if coin_path.any():
+        path_vectors.append(coin_path)
+
+    # Crate navigation is used only when no visible coin exists, matching the existing crate reward shaping.
+    if feature_mode in {"f2", "f3", "f4", "f5", "f6", "f7"} and not game_state["coins"]:
+        crate_path = state[16:20]
+
+        if crate_path.any():
+            path_vectors.append(crate_path)
+
+    # Opponent hunting
+    if feature_mode in {"f5", "f6", "f7"}:
+        opponent_path = state[31:35]
+
+        if opponent_path.any():
+            path_vectors.append(opponent_path)
+
+        if not path_vectors:
+            return False
+
+    field = game_state["field"]
+    explosion_map = game_state.get("explosion_map")
+    x, y = game_state["self"][3]
+
+    bomb_positions = {position for position, _ in game_state.get("bombs", [])}
+
+    opponent_positions = {other[3] for other in game_state.get("others", [])}
+
+    # Tiles that are lethal during this action: currently active explosions; bombs with timer 0
+    imminent_bombs = [(position, timer) for position, timer in game_state.get("bombs", []) if timer <= 0]
+
+    immediate_danger_tiles = bomb_danger_tiles(field, imminent_bombs, explosion_map)
+
+    for i, (dx, dy) in enumerate(DIRECTIONS):
+
+        # No relevant navigation feature points this way.
+        if not any(path[i] == 1.0 for path in path_vectors):
+            continue
+
+        nx = x + dx
+        ny = y + dy
+        next_position = (nx, ny)
+
+        if not (0 <= nx < field.shape[0] and 0 <= ny < field.shape[1]):
+            continue
+
+        # Wall/crate
+        if field[nx, ny] != 0:
+            continue
+
+        # Active explosion
+        if explosion_map is not None and explosion_map[nx, ny] > 0:
+            continue
+
+        # Bomb occupies tile
+        if next_position in bomb_positions:
+            continue
+
+        # Opponent occupies tile
+        if next_position in opponent_positions:
+            continue
+
+        # Moving there would kill the agent during this turn.
+        if next_position in immediate_danger_tiles:
+            continue
+
+        return True
+
+    return False
 
 
 def setup_training(self):
@@ -117,27 +207,59 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     self.logger.debug(f'Encountered game event(s) {", ".join(map(repr, events))} in step {new_game_state["step"]}')
 
     # state_to_features is defined in callbacks.py
-    if self.feature_mode in {"f5"}:
-        state = self.cached_features
-        next_state = state_to_features(new_game_state, self.feature_mode, previous_action=self_action)
-    else:
-        state = state_to_features(old_game_state, self.feature_mode)
-        next_state = state_to_features(new_game_state, self.feature_mode)
+    state = state_to_features(old_game_state, self.feature_mode)
+    next_state = state_to_features(new_game_state, self.feature_mode)
+
+    # Custom event: opponent hunting
+    if self.feature_mode in {"f5", "f6", "f7"}:
+        # Reward moving along the shortest path toward an opponent.
+        # F5 features 31:35 = [UP, DOWN, LEFT, RIGHT]
+        opponent_path = state[31:35]
+
+        if state[20] == 0.0 and opponent_path.any():
+            old_x, old_y = old_game_state["self"][3]
+            new_x, new_y = new_game_state["self"][3]
+
+            dx = new_x - old_x
+            dy = new_y - old_y
+
+            direction_to_index = {
+                (0, -1): 0, # UP
+                (0, 1): 1, # DOWN
+                (-1, 0): 2, # LEFT
+                (1, 0): 3 # RIGHT
+            }
+
+            moved_index = direction_to_index.get((dx, dy))
+
+            # Only reward an actual successful movement.
+            if moved_index is not None and opponent_path[moved_index] == 1.0:
+                if self.feature_mode in {"f7"} and is_hunt_mode(old_game_state):
+                    events.append(MOVED_TOWARDS_OPPONENT_HUNT)
+                else:
+                    events.append(MOVED_TOWARDS_OPPONENT)
+
+        # Reward a bomb that currently threatens an opponent and still leaves an escape route.
+        if self_action == "BOMB" and state[35] == 1.0:
+            if self.feature_mode in {"f7"} and is_hunt_mode(old_game_state):
+                events.append(SAFE_OPPONENT_BOMB_DROPPED_HUNT)
+            else:
+                events.append(SAFE_OPPONENT_BOMB_DROPPED)
 
     # Custom event: safe and useful bomb placement
-    if self.feature_mode in {"f4", "f5"} and self_action == "BOMB" and state[26] == 1.0:
+    if self.feature_mode in {"f4", "f5", "f6", "f7"} and self_action == "BOMB" and state[26] == 1.0:
         events.append(SAFE_USEFUL_BOMB_DROPPED)
 
     # Bomb danger status
-    old_in_danger = self.feature_mode in {"f2", "f3", "f4", "f5"} and state[20] == 1.0
-    new_in_danger = self.feature_mode in {"f2", "f3", "f4", "f5"} and next_state[20]  == 1.0
+    old_in_danger = self.feature_mode in {"f2", "f3", "f4", "f5", "f6", "f7"} and state[20] == 1.0
+    new_in_danger = self.feature_mode in {"f2", "f3", "f4", "f5", "f6", "f7"} and next_state[20]  == 1.0
 
     # Custom event: escaped bomb danger
     if old_in_danger and not new_in_danger:
         events.append(ESCAPED_BOMB_DANGER)
 
     # Custom event: move along crate path
-    if self.feature_mode in {"f2", "f3", "f4", "f5"}:
+    if self.feature_mode in {"f2", "f3", "f4", "f5", "f6", "f7"}:
         crate_path = state[16:20]
 
         # Only search for crates when there is no visible coin and escaping a bomb is not currently more important.
@@ -181,33 +303,15 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
         elif new_distance > old_distance:
             events.append(MOVED_AWAY_FROM_COIN)
 
-    # Penalize unnecessary WAIT
-    if not old_in_danger and self_action == "WAIT" and old_distance > 0:
+    # Penalize  WAIT only when the agent is safe and has an immediately actionable navigation move.
+    if not old_in_danger and self_action == "WAIT" and has_actionable_navigation_move(old_game_state, state, self.feature_mode):
         events.append(UNNECESSARILY_WAITED)
-
-    # Penalize immediate movement reversal in F5.
-    opposite_previous_feature = {
-        "UP": 28,       # previous DOWN
-        "DOWN": 27,     # previous UP
-        "LEFT": 30,     # previous RIGHT
-        "RIGHT": 29,    # previous LEFT
-    }
-
-    opposite_index = opposite_previous_feature.get(self_action)
-
-    if (
-        self.feature_mode in {"f5"}
-        and not old_in_danger
-        and opposite_index is not None
-        and state[opposite_index] == 1.0
-    ):
-        events.append(OSCILLATION)
 
     # Model Learn
     reward = reward_from_events(self, events)
     action = ACTION_TO_INDEX[self_action]
 
-    next_action = select_action(self, next_state)
+    next_action = select_action(self, next_state, new_game_state)
     self.pending_action = next_action
 
     self.model.update(state, action, reward, next_state, ACTION_TO_INDEX[next_action])
@@ -228,10 +332,7 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
     """
     self.logger.debug(f'Encountered event(s) {", ".join(map(repr, events))} in final step')
 
-    if self.feature_mode == "f5":
-        state = self.cached_features
-    else:
-        state = state_to_features(last_game_state, self.feature_mode)
+    state = state_to_features(last_game_state, self.feature_mode)
 
     reward = reward_from_events(self, events)
     action = ACTION_TO_INDEX[last_action]
@@ -244,6 +345,7 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
     self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
     self.feature_previous_action = None
     self.cached_features = None
+    self.escape_bomb_position = None
 
     # Store the model
     with open("my-saved-model.pt", "wb") as file:
@@ -259,9 +361,7 @@ def end_of_round(self, last_game_state: dict, last_action: str, events: List[str
 
 
 def reward_from_events(self, events: List[str]) -> float:
-    """
-    Here we can modify the rewards the agent get so as to en/discourage certain behavior.
-    """
+    """Modify the rewards the agent get so as to en/discourage certain behavior."""
     game_rewards = REWARD_CONFIGS[self.reward_mode]
 
     reward_sum = 0
@@ -272,3 +372,13 @@ def reward_from_events(self, events: List[str]) -> float:
     self.logger.info(f"Awarded {reward_sum} for events {', '.join(events)}")
 
     return reward_sum
+
+
+def is_hunt_mode( game_state):
+    """Return True when no currently collectable coins are visible and at least one opponent is still alive."""
+    if game_state is None:
+        return False
+
+    return len(game_state.get("coins", [])) == 0 and len(game_state.get("others", [])) > 0
+
+
