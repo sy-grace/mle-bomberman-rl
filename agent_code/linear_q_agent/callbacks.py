@@ -550,13 +550,10 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
                 escape_field[bomb_x, bomb_y] = -1
 
         if features[20] == 1.0:
-            features[21:25] = escape_directions(
-                escape_field,
-                agent[3],
-                bombs,
-                explosion_map,
-                danger_tiles,
-            )
+            if feature_mode == "f6":
+                features[21:25] = escape_directions(escape_field, agent[3], bombs, explosion_map, danger_tiles,)
+            else:
+                features[21:25] = shortest_path_directions_to_any(escape_field, agent[3], safe_targets)
 
         # 25: safe to bomb
         if feature_mode in {"f3", "f4", "f5", "f6", "f7"}:
