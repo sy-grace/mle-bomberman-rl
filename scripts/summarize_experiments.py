@@ -47,10 +47,10 @@ TASK2_RUN_PATTERN = re.compile(
 )
 
 # Task 3 experiments use opponents. Keep the feature part flexible so that
-# F4 baselines, F5, F6 opponent-aware models, and later feature variants can all
+# F4 baselines, F5, F6, F7 opponent-aware models, and later feature variants can all
 # be summarized without changing this script again.
 TASK3_RUN_PATTERN = re.compile(
-    r"^(f[456])_(sparse|basic|shaped)_seed(\d+)$"
+    r"^(f[4567])_(sparse|basic|shaped)_seed(\d+)$"
 )
 
 

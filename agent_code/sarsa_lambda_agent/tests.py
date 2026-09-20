@@ -739,14 +739,14 @@ class LinearSARSAAgentTest(unittest.TestCase):
 
 
     def test_f6_feature_vector_has_thirty_eight_features(self):
-        """Feature Test AL: Verify that F6 produces a 38-dimensional feature vector."""
+        """Feature Test BB: Verify that F6 produces a 38-dimensional feature vector."""
         state = self._game_state()
         features = state_to_features(state, "f6")
         self.assertEqual(features.shape, (38,))
 
 
     def test_f6_preserves_all_f5_features(self):
-        """Feature Test AM: F6 must preserve the complete F5 representation."""
+        """Feature Test BC: F6 must preserve the complete F5 representation."""
         state = self._game_state()
 
         f5 = state_to_features(state, "f5")
@@ -756,17 +756,52 @@ class LinearSARSAAgentTest(unittest.TestCase):
 
 
     def test_f6_uses_task2_action_space_with_bomb(self):
-        """Feature Test AN: F6 uses the six Task 2 actions."""
+        """Feature Test BD: F6 uses the six Task 3 actions."""
         actions = callbacks.actions_for_feature_mode("f6")
         expected = ["UP", "DOWN", "LEFT", "RIGHT", "WAIT", "BOMB"]
         self.assertEqual(actions, expected)
 
 
     def test_f6_fresh_model_uses_thirty_eight_inputs_and_six_outputs(self):
-        """Feature Test AO: Fresh F6 training creates a 38-input, 6-action model."""
+        """Feature Test BE: Fresh F6 training creates a 38-input, 6-action model."""
         agent = SimpleNamespace(train=True, logger=Mock())
 
         with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "FEATURE_MODE": "f6"}, clear=True):
+            callbacks.setup(agent)
+
+        self.assertEqual(agent.model.input_size, 38)
+        self.assertEqual(agent.model.output_size, 6)
+
+
+    def test_f7_feature_vector_has_thirty_eight_features(self):
+        """Feature Test BF: Verify that F7 produces a 38-dimensional feature vector."""
+        state = self._game_state()
+        features = state_to_features(state, "f7")
+        self.assertEqual(features.shape, (38,))
+
+
+    def test_f7_preserves_all_f6_features(self):
+        """Feature Test BG: F7 must preserve the complete F6 representation."""
+        state = self._game_state()
+
+        f6 = state_to_features(state, "f6")
+        f7 = state_to_features(state, "f7")
+
+        np.testing.assert_array_equal(f7[:38], f6)
+
+
+    def test_f7_uses_task3_action_space_with_bomb(self):
+        """Feature Test BH: F7 uses the six Task 3 actions."""
+        actions = callbacks.actions_for_feature_mode("f7")
+        expected = ["UP", "DOWN", "LEFT", "RIGHT", "WAIT", "BOMB"]
+        self.assertEqual(actions, expected)
+
+
+    def test_f7_fresh_model_uses_thirty_eight_inputs_and_six_outputs(self):
+        """Feature Test BI: Fresh F7 training creates a 38-input, 6-action model."""
+        agent = SimpleNamespace(train=True, logger=Mock())
+
+        with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "FEATURE_MODE": "f7"}, clear=True):
             callbacks.setup(agent)
 
         self.assertEqual(agent.model.input_size, 38)
@@ -1426,6 +1461,263 @@ class LinearSARSAAgentTest(unittest.TestCase):
 
         self.assertAlmostEqual(reward, 21.5)
 
+
+    def test_f7_adds_hunt_opponent_event_when_moving_towards_opponent(self):
+        """Reward Test V: F7 uses the stronger pursuit event when moving toward an opponent in hunt mode."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f7"
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, True, (4, 3))
+
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertIn(train.MOVED_TOWARDS_OPPONENT_HUNT, events)
+        self.assertNotIn(train.MOVED_TOWARDS_OPPONENT, events)
+
+
+    def test_f7_uses_normal_opponent_event_outside_hunt_mode(self):
+        """Reward Test W: F7 keeps the normal pursuit event while a visible coin exists."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f7"
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = [(1, 1)]
+        new_state["coins"] = [(1, 1)]
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, True, (4, 3))
+
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertIn(train.MOVED_TOWARDS_OPPONENT, events)
+        self.assertNotIn(train.MOVED_TOWARDS_OPPONENT_HUNT, events)
+
+
+    def test_f6_does_not_use_f7_hunt_opponent_event(self):
+        """Reward Test X: F6 keeps its original opponent-pursuit event even under hunt-mode conditions."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f6"
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, True, (4, 3))
+
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertIn(train.MOVED_TOWARDS_OPPONENT, events)
+        self.assertNotIn(train.MOVED_TOWARDS_OPPONENT_HUNT, events)
+
+
+    def test_shaped_reward_strengthens_f7_hunt_pursuit(self):
+        """Reward Test Y: Hunt-mode opponent pursuit receives the stronger shaped reward."""
+        agent = SimpleNamespace(
+            logger=Mock(),
+            reward_mode="shaped"
+        )
+        reward = train.reward_from_events(agent, [train.MOVED_TOWARDS_OPPONENT_HUNT])
+        self.assertAlmostEqual(reward, 3.0)
+
+
+    def test_f7_adds_hunt_opponent_bomb_event_in_hunt_mode(self):
+        """Reward Test Z: F7 uses the hunt-specific bomb event for a safe opponent-targeting bomb in hunt mode."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f7"
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, False, (3, 3))
+
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+
+        new_state["bombs"] = [((3, 3), 3)]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "BOMB", new_state, events)
+
+        self.assertIn(train.SAFE_OPPONENT_BOMB_DROPPED_HUNT, events)
+        self.assertNotIn(train.SAFE_OPPONENT_BOMB_DROPPED, events)
+
+
+    def test_f7_uses_normal_opponent_bomb_event_outside_hunt_mode(self):
+        """Reward Test AA: F7 keeps the normal opponent-bomb event while a visible coin exists."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f7"
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = [(1, 1)]
+        new_state["coins"] = [(1, 1)]
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, False, (3, 3))
+
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+
+        new_state["bombs"] = [((3, 3), 3)]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "BOMB", new_state, events)
+
+        self.assertIn(train.SAFE_OPPONENT_BOMB_DROPPED, events)
+        self.assertNotIn(train.SAFE_OPPONENT_BOMB_DROPPED_HUNT, events)
+
+
+    def test_f6_does_not_use_f7_hunt_opponent_bomb_event(self):
+        """Reward Test AB: F6 keeps the original opponent-bomb event under hunt-mode conditions."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f6"
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, False, (3, 3))
+
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+
+        new_state["bombs"] = [((3, 3), 3)]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "BOMB", new_state, events)
+
+        self.assertIn(train.SAFE_OPPONENT_BOMB_DROPPED, events)
+        self.assertNotIn(train.SAFE_OPPONENT_BOMB_DROPPED_HUNT, events)
+
+
+    def test_shaped_reward_values_f7_hunt_opponent_bomb(self):
+        """Reward Test AC: Hunt-mode opponent bomb placement receives the stronger shaped reward."""
+        agent = SimpleNamespace(
+            logger=Mock(),
+            reward_mode="shaped"
+        )
+        reward = train.reward_from_events(agent, [train.SAFE_OPPONENT_BOMB_DROPPED_HUNT])
+        self.assertAlmostEqual(reward, 1.0)
+
+
+    def test_f7_hunt_bomb_can_reward_crate_and_opponent_together(self):
+        """Reward Test AD: A safe hunt-mode bomb may receive both crate and opponent bomb events."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f7"
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, False, (3, 3))
+
+        # Crate is inside the blast range.
+        old_state["field"][3, 2] = 1
+        new_state["field"][3, 2] = 1
+
+        # Opponent is also inside the blast range
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+
+        new_state["bombs"] = [((3, 3), 3)]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "BOMB", new_state, events)
+
+        self.assertIn(train.SAFE_USEFUL_BOMB_DROPPED, events)
+        self.assertIn(train.SAFE_OPPONENT_BOMB_DROPPED_HUNT, events)
+    
 
     def test_shortest_path_direction_right(self):
         """Path Test A: Test that a target directly to the right returns RIGHT as the valid first step."""
@@ -2121,7 +2413,7 @@ class LinearSARSAAgentTest(unittest.TestCase):
         action = callbacks.select_action(agent, features, state)
 
         self.assertEqual(action, "WAIT")
-        
+
 
     def test_f6_does_not_move_into_timer_zero_blast(self):
         """Escape Controller Test F: F6 must not move into a blast resolving this step."""
@@ -2218,3 +2510,80 @@ class LinearSARSAAgentTest(unittest.TestCase):
         action = callbacks.select_action(agent, features, state)
 
         self.assertEqual(action, "RIGHT")
+
+
+    def test_f7_inherits_f6_immediate_blast_filter(self):
+        """Escape Controller Test I: F7 inherits the F6 immediate-blast filter."""
+        state = self._game_state()
+
+        state["coins"] = []
+        state["self"] = ("player", 0, False, (2, 3))
+
+        state["field"][3, 3] = 0
+        state["field"][3, 4] = 0
+        state["field"][3, 5] = 0
+
+        state["bombs"] = [((3, 5), 0)]
+
+        agent = SimpleNamespace(
+            train=False,
+            feature_mode="f7",
+            actions=callbacks.actions_for_feature_mode("f7"),
+            model=Mock(),
+            logger=Mock(),
+            escape_bomb_position=None
+        )
+
+        agent.model.predict.return_value = np.array([0, 0, 10, 100, 1, 0], dtype=float)
+
+        features = state_to_features(state, "f7")
+        action = callbacks.select_action(agent, features, state)
+
+        self.assertEqual(action, "LEFT")
+
+
+    def test_hunt_mode_when_no_visible_coins_and_opponent_remains(self):
+        """Hunt Mode Test A: Hunt mode is active when no visible coins remain and an oponent is alive."""
+        state = self._game_state()
+
+        state["coins"] = []
+        state["others"] = [("enemy", 0, True, (5, 5))]
+
+        self.assertTrue(train.is_hunt_mode(state))
+
+
+    def test_hunt_mode_inactive_when_coin_is_visible(self):
+        """Hunt Mode Test B: Hunt mode is inactive while a collectable coin is visible."""
+        state = self._game_state()
+
+        state["coins"] = [(5, 4)]
+        state["others"] = [("enemy", 0, True, (5, 5))]
+
+        self.assertFalse(train.is_hunt_mode(state))
+
+
+    def test_hunt_mode_inactive_when_no_opponent_remains(self):
+        """Hunt Mode Test C: Hunt mode is inactive when no opponent remains in the game."""
+        state = self._game_state()
+
+        state["coins"] = []
+        state["others"] = []
+
+        self.assertFalse(train.is_hunt_mode(state))
+
+
+    def test_hunt_mode_can_active_while_crates_remain(self):
+        """Hunt Mode Test D: Remaining crates do not prevent hunt mode when no visible coins exist."""
+        state = self._game_state()
+
+        state["coins"] = []
+        state["others"] = [("enemy", 0, True, (5, 5))]
+
+        state["field"][2, 2] = 1
+
+        self.assertTrue(train.is_hunt_mode(state))
+
+
+    def test_hunt_mode_inactive_for_missing_game_state(self):
+        """Hunt Mode Test E: Hunt mode is inactive when no game state is available."""
+        self.assertFalse(train.is_hunt_mode(None))
