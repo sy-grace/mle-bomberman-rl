@@ -720,7 +720,6 @@ def shortest_path_directions_to_any(field, start, targets):
         distances[target] = 0
         queue.append(target)
 
-    # BFS starting from the target
     while queue:
         x, y = queue.popleft()
 
@@ -809,21 +808,27 @@ def can_escape_after_bomb(field, start, bombs, explosion_map=None, blocked_posit
     ).any())
 
 
+def escape_deadline(field, start, bombs, explosion_map=None):
+    """Return the number of moves available before the current danger resolves."""
+    deadlines = [
+        timer + 1 for bomb, timer in bombs
+        if start in bomb_danger_tiles(field, [(bomb, timer)])
+    ]
+    if explosion_map is not None and explosion_map[start] > 0:
+        deadlines.append(1)
+    if not deadlines:
+        return None
+    return min(deadlines)
+
+
 def escape_directions(field, start, bombs, explosion_map=None, danger_tiles=None):
     """Return first moves that reach a safe tile before the relevant bomb explodes."""
     if danger_tiles is None:
         danger_tiles = bomb_danger_tiles(field, bombs, explosion_map)
 
-    relevant_timers = [
-        timer for bomb, timer in bombs
-        if start in bomb_danger_tiles(field, [(bomb, timer)])
-    ]
-    if explosion_map is not None and explosion_map[start] > 0:
-        relevant_timers.append(1)
-    if not relevant_timers:
+    max_distance = escape_deadline(field, start, bombs, explosion_map)
+    if max_distance is None:
         return np.zeros(4)
-
-    max_distance = min(relevant_timers)
     if max_distance < 1:
         return np.zeros(4)
 
@@ -874,16 +879,10 @@ def escape_directions(field, start, bombs, explosion_map=None, danger_tiles=None
 def escape_path(field, start, bombs, explosion_map=None):
     """Return a shortest timed path to safety, expressed as movement actions."""
     danger_tiles = bomb_danger_tiles(field, bombs, explosion_map)
-    relevant_timers = [
-        timer for bomb, timer in bombs
-        if start in bomb_danger_tiles(field, [(bomb, timer)])
-    ]
-    if explosion_map is not None and explosion_map[start] > 0:
-        relevant_timers.append(1)
-    if not relevant_timers:
+    max_distance = escape_deadline(field, start, bombs, explosion_map)
+    if max_distance is None:
         return []
 
-    max_distance = min(relevant_timers)
     existing_bomb_tiles = {position for position, _timer in bombs}
     offsets_to_actions = dict(zip(DIRECTIONS, ("UP", "DOWN", "LEFT", "RIGHT")))
     queue = deque([(start, 0, [])])
