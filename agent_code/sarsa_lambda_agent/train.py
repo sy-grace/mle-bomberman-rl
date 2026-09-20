@@ -34,6 +34,7 @@ SAFE_OPPONENT_BOMB_DROPPED = "SAFE_OPPONENT_BOMB_DROPPED"
 MOVED_AWAY_FROM_OPPONENT = "MOVED_AWAY_FROM_OPPONENT"
 MOVED_TOWARDS_OPPONENT_HUNT = "MOVED_TOWARDS_OPPONENT_HUNT"
 SAFE_OPPONENT_BOMB_DROPPED_HUNT = "SAFE_OPPONENT_BOMB_DROPPED_HUNT"
+MOVED_AWAY_FROM_OPPONENT_HUNT = "MOVED_AWAY_FROM_OPPONENT_HUNT"
 
 SPARSE_REWARDS = {
     e.COIN_COLLECTED: +10
@@ -62,13 +63,16 @@ SHAPING_EXTRA_REWARDS = {
     SAFE_OPPONENT_BOMB_DROPPED: +0.5,
     MOVED_AWAY_FROM_OPPONENT: -0.5,
     MOVED_TOWARDS_OPPONENT_HUNT: +3.0,
-    SAFE_OPPONENT_BOMB_DROPPED_HUNT: +1.0
+    SAFE_OPPONENT_BOMB_DROPPED_HUNT: +1.0,
 }
+
+HUNT_EXTRA_REWARDS = {MOVED_AWAY_FROM_OPPONENT_HUNT: -1.0}
 
 REWARD_CONFIGS = {
     "sparse": SPARSE_REWARDS, 
     "basic": {**SPARSE_REWARDS, **BASIC_EXTRA_REWARDS}, 
-    "shaped": {**SPARSE_REWARDS, **BASIC_EXTRA_REWARDS, **SHAPING_EXTRA_REWARDS}
+    "shaped": {**SPARSE_REWARDS, **BASIC_EXTRA_REWARDS, **SHAPING_EXTRA_REWARDS},
+    "hunt_extra": {**SPARSE_REWARDS, **BASIC_EXTRA_REWARDS, **SHAPING_EXTRA_REWARDS, **HUNT_EXTRA_REWARDS},
 }
 
 ACTION_TO_INDEX = {
@@ -232,12 +236,17 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
 
             moved_index = direction_to_index.get((dx, dy))
 
-            # Only reward an actual successful movement.
-            if moved_index is not None and opponent_path[moved_index] == 1.0:
-                if self.feature_mode in {"f7", "f8"} and is_hunt_mode(old_game_state):
-                    events.append(MOVED_TOWARDS_OPPONENT_HUNT)
-                else:
-                    events.append(MOVED_TOWARDS_OPPONENT)
+            # Only shape an actual successful movement.
+            if moved_index is not None:
+                hunt_mode = self.feature_mode in {"f7", "f8"} and is_hunt_mode(old_game_state)
+
+                if opponent_path[moved_index] == 1.0:
+                    if hunt_mode:
+                        events.append(MOVED_TOWARDS_OPPONENT_HUNT)
+                    else:
+                        events.append(MOVED_TOWARDS_OPPONENT)
+                elif hunt_mode:
+                    events.append(MOVED_AWAY_FROM_OPPONENT_HUNT)
 
         # Reward a bomb that currently threatens an opponent and still leaves an escape route.
         if self_action == "BOMB" and state[35] == 1.0:
