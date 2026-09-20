@@ -24,7 +24,7 @@ TASK1_ACTIONS = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'WAIT']
 TASK2_ACTIONS = TASK1_ACTIONS + ["BOMB"]
 
 EPSILON_START = 1.0
-FEATURE_SIZES = {"f0": 7, "f1": 11, "f2": 25, "f3": 26, "f4": 27, "f5": 38, "f6": 38, "f7": 38}
+FEATURE_SIZES = {"f0": 7, "f1": 11, "f2": 25, "f3": 26, "f4": 27, "f5": 38, "f6": 38, "f7": 38, "f8": 42}
 
 BOMB_POWER = 3
 BOMB_TIMER = 4
@@ -57,7 +57,7 @@ def setup(self):
     self.feature_mode = os.getenv("FEATURE_MODE", "f1")
 
     if self.feature_mode not in FEATURE_SIZES:
-        raise ValueError("FEATURE_MODE must be one of 'f0', 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', or 'f7'.")
+        raise ValueError("FEATURE_MODE must be one of 'f0', 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', or 'f8'.")
 
     self.feature_size = FEATURE_SIZES[self.feature_mode]
     self.logger.info(f"Feature mode: {self.feature_mode} ({self.feature_size} features)")
@@ -127,14 +127,14 @@ def act(self, game_state: dict) -> str:
 def select_action(self, features: np.ndarray, game_state=None) -> str:
     """Select an action using the escpae controller first, then the SARSA policy."""
     # F5+: keep persistent protection from the agent's own recently placed bomb until that bomb and its explosion have disappeared.
-    if self.feature_mode in {"f5", "f6", "f7"} and game_state is not None:
+    if self.feature_mode in {"f5", "f6", "f7", "f8"} and game_state is not None:
         escape_action = persistent_escape_action(self, game_state, features)
 
         if escape_action is not None:
             return escape_action
 
     # F6+: escape bombs that are not covered by the persistent own-bomb controller. In normal play these are opponent bombs.
-    if self.feature_mode in {"f6", "f7"} and game_state is not None:
+    if self.feature_mode in {"f6", "f7", "f8"} and game_state is not None:
         opponent_escape_action = opponent_bomb_aviodance_action(self, game_state, features)
         if opponent_escape_action is not None:
             return opponent_escape_action
@@ -148,7 +148,7 @@ def select_action(self, features: np.ndarray, game_state=None) -> str:
 
     # If the policy decides to place a valid bomb, remember its position.
     # The bomb will appear in the next game state.
-    if self.feature_mode in {"f5", "f6", "f7"} and game_state is not None and action == "BOMB" and game_state["self"][2]:
+    if self.feature_mode in {"f5", "f6", "f7", "f8"} and game_state is not None and action == "BOMB" and game_state["self"][2]:
         self.escape_bomb_position = game_state["self"][3]
 
     return action
@@ -193,7 +193,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
         return None
 
     if feature_mode not in FEATURE_SIZES:
-        raise ValueError("feature_mode must be one of 'f0', 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', or 'f7'.")
+        raise ValueError("feature_mode must be one of 'f0', 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', or 'f8'.")
 
     # Get the current location of the agent
     field = game_state["field"] # np.ndarray
@@ -218,11 +218,12 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
     #           escape_U, escape_D, escape_L, escape_R]
     # F3: F2 + [safe_to_bomb]
     # F4: F3 + [safe_and_useful_bomb]
-    # F5: F4 + [opponent_UP, opponent_DOWN, opponent_LEFT, opponent_RIGHT,
-    #           opponent_path_UP, opponent_path_DOWN, opponent_path_LEFT, opponent_path_RIGHT,
+    # F5: F4 + [opponent_U, opponent_D, opponent_L, opponent_R,
+    #           opponent_path_U, opponent_path_D, opponent_path_L, opponent_path_RT,
     #           safe_and_useful_opponent_bomb, bomb_urgency, normalized_crate_distance]
     # F6: same 38-dimensional representation as F5 + opponent bomb avoidance controller
     # F7: same 38-dimensional representation as F6 + hunt mode
+    # F8: F7 + [normalized_opponent_distsance, opponent_escape_fraction, opponent_low_escape, safe_trapping_bomb]
     feature_size = FEATURE_SIZES[feature_mode]
     features = np.zeros(feature_size)
 
@@ -271,11 +272,11 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
                 closest_distance = manhattan_distance
                 closest_coin = coin
 
-        if closest_coin is not None and feature_mode in {"f1", "f2", "f3", "f4", "f5", "f6", "f7"}:
+        if closest_coin is not None and feature_mode in {"f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"}:
             path_directions = shortest_path_directions(field, agent[3], closest_coin)
             features[7:11] = path_directions
 
-    if feature_mode in {"f2", "f3", "f4", "f5", "f6", "f7"}:
+    if feature_mode in {"f2", "f3", "f4", "f5", "f6", "f7", "f8"}:
         # 11: bomb available
         features[11] = float(agent[2] > 0)
 
@@ -298,7 +299,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
         features[20] = float(agent[3] in danger_tiles)
 
         # 21:25: escape direction [UP, DOWN, LEFT, RIGHT]
-        if feature_mode in {"f5", "f6", "f7"}:
+        if feature_mode in {"f5", "f6", "f7", "f8"}:
             opponent_positions = {other[3] for other in others}
         else:
             opponent_positions = set()
@@ -316,7 +317,7 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
             if (bomb_x, bomb_y) != agent[3]:
                 escape_field[bomb_x, bomb_y] = -1
 
-        if feature_mode in {"f5", "f6", "f7"}:
+        if feature_mode in {"f5", "f6", "f7", "f8"}:
             for ox, oy in opponent_positions:
                 escape_field[ox, oy] = -1
 
@@ -324,15 +325,15 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
             features[21:25] = shortest_path_directions_to_any(escape_field, agent[3], safe_targets)
 
         # 25: safe to bomb
-        if feature_mode in {"f3", "f4", "f5", "f6", "f7"}:
+        if feature_mode in {"f3", "f4", "f5", "f6", "f7", "f8"}:
             safe_to_bomb = bool(agent[2] and can_escape_after_bomb(field, agent[3], bombs, explosion_map, blocked_positions=opponent_positions))
             features[25] = float(safe_to_bomb)
 
             # 26: safe and useful bomb
-            if feature_mode in {"f4", "f5", "f6", "f7"}:
+            if feature_mode in {"f4", "f5", "f6", "f7", "f8"}:
                 features[26] = float(safe_to_bomb and bomb_would_destroy_crate(field, agent[3]))
 
-                if feature_mode in {"f5", "f6", "f7"}:
+                if feature_mode in {"f5", "f6", "f7", "f8"}:
                     # 27:31: adjacent opponents [UP, DOWN, LEFT, RIGHT]
                     for i, (dx, dy) in enumerate(DIRECTIONS):
                         nx = agent_x + dx
@@ -359,12 +360,46 @@ def state_to_features(game_state: dict, feature_mode: str) -> np.ndarray:
                             max_distance = field.shape[0] + field.shape[1] - 2
                             features[37] = crate_distance / max_distance
 
+                    if feature_mode in {"f8"} and others:
+                        nearest_enemy, enemy_distance = nearest_opponent(field, agent[3], others)
+
+                        if nearest_enemy is not None:
+                            enemy_position = nearest_enemy[3]
+
+                            # 38: normalized opponent distance
+                            if enemy_distance is not None:
+                                max_distance = field.shape[0] + field.shape[1] - 2
+                                features[38] = min(enemy_distance / max_distance, 1.0)
+
+                            # 39: current opponent escape fraction
+                            escape_fraction = opponent_escape_fraction(game_state, enemy_position)
+                            features[39] = escape_fraction
+
+                            # 40: opponent has at most one currently available escape direction
+                            features[40] = float(escape_fraction <= 0.25)
+
+                            # 41: safe trapping bomb
+                            if safe_to_bomb and bomb_would_hit_opponent(field, agent[3], {enemy_position}):
+                                other_blockers = {other[3] for other in others if other[3] != enemy_position}
+
+                                # Our current tile becomes occupied by the hypothetical bomb, so the enemy cannot move through it anyway.
+                                enemy_can_escape = opponent_can_escape_hypothetical_bomb(
+                                    field=field,
+                                    opponent_start=enemy_position,
+                                    bomb_position=agent[3],
+                                    bombs=bombs,
+                                    explosion_map=explosion_map,
+                                    blocked_positions=other_blockers,
+                                )
+
+                                features[41] = float(not enemy_can_escape)
+
     # Return the final feature vector
     return features
 
 
 def actions_for_feature_mode(feature_mode):
-    if feature_mode in {"f2", "f3", "f4", "f5", "f6", "f7"}:
+    if feature_mode in {"f2", "f3", "f4", "f5", "f6", "f7", "f8"}:
         return TASK2_ACTIONS
     return TASK1_ACTIONS
 
@@ -890,3 +925,136 @@ def immediate_safe_actions(game_state, actions):
         allowed_actions.append(action)
 
     return allowed_actions
+
+
+def nearest_opponent(field, start, opponents):
+    """Return the nearest reachable opponent and its approximate path distance."""
+
+    if not opponents:
+        return None, None
+
+    best_opponent = None
+    best_distance = None
+
+    for opponent in opponents:
+        opponent_pos = opponent[3]
+
+        # Cannot walk onto the opponent tile itself, so use free adjacent tiles as approach targets.
+        targets = set()
+
+        for dx, dy in DIRECTIONS:
+            nx = opponent_pos[0] + dx
+            ny = opponent_pos[1] + dy
+
+            if 0 <= nx < field.shape[0] and 0 <= ny < field.shape[1] and field[nx, ny] == 0:
+                targets.add((nx, ny))
+
+        if not targets:
+            continue
+
+        distances = shortest_path_distance_map(field, targets)
+        distance = distances[start]
+
+        if distance < 0:
+            continue
+
+        # +1: final distance from approach tile to opponent
+        distance += 1
+
+        if best_distance is None or distance < best_distance:
+            best_distance = distance
+            best_opponent = opponent
+
+    return best_opponent, best_distance
+
+
+def opponent_escape_fraction(game_state, opponent_position):
+    """Return the fraction of immediately available safe movement directions for an opponent."""
+    field = game_state["field"]
+    bombs = game_state.get("bombs", [])
+    explosion_map = game_state.get("explosion_map")
+
+    bomb_positions = {position for position, _ in bombs}
+
+    occupied_positions = {other[3] for other in game_state.get("others", []) if other[3] != opponent_position}
+
+    # Only danger that can kill during the immediately following action.
+    imminent_bombs = [(position, timer) for position, timer in bombs if timer <= 0]
+    immediate_danger = bomb_danger_tiles(field, imminent_bombs, explosion_map)
+
+    safe_moves = 0
+
+    for dx, dy in DIRECTIONS:
+        nx = opponent_position[0] + dx
+        ny = opponent_position[1] + dy
+        next_pos = (nx, ny)
+
+        if not (0 <= nx < field.shape[0] and 0 <= ny < field.shape[1]):
+            continue
+
+        if field[nx, ny] != 0:
+            continue
+
+        if next_pos in bomb_positions:
+            continue
+
+        if next_pos in occupied_positions:
+            continue
+
+        if next_pos in immediate_danger:
+            continue
+
+        safe_moves += 1
+
+    return safe_moves / 4.0
+
+
+def opponent_can_escape_hypothetical_bomb(field, opponent_start, bomb_position, bombs, explosion_map, blocked_positions=None):
+    """Return whether an opponent can escape the blast of a hypothetical newly placed bomb."""
+    hypothetical_bombs = list(bombs) + [(bomb_position, BOMB_TIMER)]
+    danger_tiles = bomb_danger_tiles(field, hypothetical_bombs, explosion_map)
+
+    existing_bomb_positions = {position for position, _ in bombs}
+    existing_bomb_positions.add(bomb_position)
+
+    blocked_positions = set(blocked_positions or [])
+
+    queue = deque([(opponent_start, 0)])
+    visited = {opponent_start}
+
+    while queue:
+        position, distance = queue.popleft()
+        x, y = position
+
+        # Opponent managed to leave the future blast area.
+        if distance > 0 and position not in danger_tiles:
+            return True
+
+        if distance >= BOMB_TIMER:
+            continue
+
+        for dx, dy in DIRECTIONS:
+            nx = x + dx
+            ny = y + dy
+            next_pos = (nx, ny)
+
+            if field[nx, ny] != 0:
+                continue
+
+
+            if next_pos in existing_bomb_positions:
+                continue
+
+            if next_pos in blocked_positions:
+                continue
+
+            if explosion_map is not None and explosion_map[nx, ny] > 0:
+                continue
+
+            if next_pos in visited:
+                continue
+
+            visited.add(next_pos)
+            queue.append((next_pos, distance + 1))
+
+    return False
