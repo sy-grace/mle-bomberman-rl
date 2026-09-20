@@ -55,12 +55,12 @@ TASK3_RUN_PATTERN = re.compile(
 )
 
 
-# Task 4 result directories explicitly distinguish zero-shot transfer
-# baselines, Task-3-initialized fine-tuning, and fresh Task-4 training.
+# Task 4 result directories explicitly distinguish zero-shot transfer,
+# rule-based fine-tuning, mixed-opponent fine-tuning, and fresh Task-4 training.
 # Keep the feature part flexible so later variants such as F8 or F9 are
 # discovered automatically.
 TASK4_RUN_PATTERN = re.compile(
-    r"^(f\d+)_(sparse|basic|shaped)_seed(\d+)_(baseline|finetuned|trained)$"
+    r"^(f\d+)_(sparse|basic|shaped)_seed(\d+)_(baseline|finetuned|mixed|trained)$"
 )
 
 TASK1_METRICS = [
@@ -154,6 +154,14 @@ TASK4_METRICS = [
     "eval_survival_rate",
     "eval_score_win_rate",
     "eval_score_tie_rate",
+
+    # Oscillation diagnostics recovered from eval_logs/game.log.
+    # Reversal rate counts exact opposite-direction actions among adjacent
+    # movement-action pairs. A long oscillation is an alternating streak of
+    # at least 50 movement actions (e.g. LEFT, RIGHT, LEFT, RIGHT, ...).
+    "eval_reversal_rate",
+    "eval_max_alternating_streak",
+    "eval_long_oscillation_rate",
 ]
 
 
@@ -170,6 +178,15 @@ LOG_COIN_RE = re.compile(r"Agent <([^>]+)> picked up coin")
 LOG_SELF_KILL_RE = re.compile(r"Agent <([^>]+)> blown up by own bomb")
 LOG_KILL_RE = re.compile(r"Agent <([^>]+)> blown up by agent <([^>]+)>'s bomb")
 LOG_BOMB_RE = re.compile(r"Agent <([^>]+)> drops bomb")
+
+MOVEMENT_ACTIONS = {"UP", "DOWN", "LEFT", "RIGHT"}
+OPPOSITE_ACTION = {
+    "UP": "DOWN",
+    "DOWN": "UP",
+    "LEFT": "RIGHT",
+    "RIGHT": "LEFT",
+}
+LONG_OSCILLATION_THRESHOLD = 50
 
 
 def experiment_paths(task, agent):
@@ -507,7 +524,6 @@ def analyze_task3_run(run_dir, agent_name):
         print(f"Skipping Task 3 run without eval.json: {run_dir.name}")
         return None
 
-    train_stats = load_json(train_path) if train_path.exists() else None
     eval_stats = load_json(eval_path)
 
     eval_rounds = extract_rounds(eval_stats)
@@ -544,7 +560,7 @@ def analyze_task3_run(run_dir, agent_name):
         "feature": feature_mode.upper(),
         "reward": reward_mode,
         "seed": int(seed),
-        **_task3_train_metrics(train_stats, agent_name),
+        **_task4_train_metrics_for_run(run_dir, agent_name),
         "eval_coins_per_round": safe_rate(eval_coins, n_eval_rounds),
         "eval_kills_per_round": safe_rate(eval_kills, n_eval_rounds),
         "eval_self_kill_rate": safe_rate(eval_suicides, n_eval_rounds),
@@ -565,7 +581,7 @@ def analyze_task3_run(run_dir, agent_name):
 
 
 def _task4_log_metrics(log_path, agent_name, opponent_name):
-    """Recover Task 4 survival and score-win metrics from eval game.log."""
+    """Recover Task 4 competitive and oscillation metrics from eval game.log."""
     log_path = Path(log_path)
     empty = {
         "eval_deaths_by_opponent_rate": None,
@@ -573,6 +589,9 @@ def _task4_log_metrics(log_path, agent_name, opponent_name):
         "eval_survival_rate": None,
         "eval_score_win_rate": None,
         "eval_score_tie_rate": None,
+        "eval_reversal_rate": None,
+        "eval_max_alternating_streak": None,
+        "eval_long_oscillation_rate": None,
     }
     if not log_path.exists():
         return empty
@@ -583,6 +602,7 @@ def _task4_log_metrics(log_path, agent_name, opponent_name):
     opponent_scores = defaultdict(int)
     target_death_rounds = set()
     target_deaths_by_opponent_rounds = set()
+    target_actions = defaultdict(list)
 
     with open(log_path, "r", encoding="utf-8", errors="replace") as file:
         for line in file:
@@ -594,6 +614,10 @@ def _task4_log_metrics(log_path, agent_name, opponent_name):
 
             if current_round is None:
                 continue
+
+            action_match = LOG_ACTION_RE.search(line)
+            if action_match and action_match.group(1) == agent_name:
+                target_actions[current_round].append(action_match.group(2))
 
             coin_match = LOG_COIN_RE.search(line)
             if coin_match:
@@ -634,7 +658,45 @@ def _task4_log_metrics(log_path, agent_name, opponent_name):
         elif target_score == opponent_score:
             ties += 1
 
+    # Oscillation diagnostics use exactly the raw action sequence of the target
+    # agent. Only adjacent movement/movement pairs enter the reversal-rate
+    # denominator; WAIT, BOMB, and invalid/non-movement actions break a streak.
+    total_movement_pairs = 0
+    total_reversals = 0
+    round_max_streaks = []
+
+    for round_id in rounds:
+        actions = target_actions.get(round_id, [])
+        previous_action = None
+        current_streak = 0
+        max_streak = 0
+
+        for action in actions:
+            if action not in MOVEMENT_ACTIONS:
+                previous_action = None
+                current_streak = 0
+                continue
+
+            if previous_action is None:
+                current_streak = 1
+            else:
+                total_movement_pairs += 1
+                if action == OPPOSITE_ACTION[previous_action]:
+                    total_reversals += 1
+                    current_streak += 1
+                else:
+                    current_streak = 1
+
+            max_streak = max(max_streak, current_streak)
+            previous_action = action
+
+        round_max_streaks.append(max_streak)
+
     death_rate = safe_rate(len(target_death_rounds), n_rounds)
+    long_oscillation_rounds = sum(
+        streak >= LONG_OSCILLATION_THRESHOLD for streak in round_max_streaks
+    )
+
     return {
         "eval_deaths_by_opponent_rate": safe_rate(
             len(target_deaths_by_opponent_rounds), n_rounds
@@ -643,24 +705,67 @@ def _task4_log_metrics(log_path, agent_name, opponent_name):
         "eval_survival_rate": 1.0 - death_rate,
         "eval_score_win_rate": safe_rate(wins, n_rounds),
         "eval_score_tie_rate": safe_rate(ties, n_rounds),
+        "eval_reversal_rate": safe_rate(total_reversals, total_movement_pairs),
+        "eval_max_alternating_streak": max(round_max_streaks, default=0),
+        "eval_long_oscillation_rate": safe_rate(long_oscillation_rounds, n_rounds),
+    }
+
+
+def _task4_train_metrics_for_run(run_dir, agent_name):
+    """Return Task 4 training metrics from train.json or mixed train_blocks/*.json."""
+    train_path = run_dir / "train.json"
+    if train_path.exists():
+        return _task3_train_metrics(load_json(train_path), agent_name)
+
+    train_block_dir = run_dir / "train_blocks"
+    block_paths = sorted(train_block_dir.glob("*.json")) if train_block_dir.exists() else []
+    if not block_paths:
+        return _task3_train_metrics(None, agent_name)
+
+    totals = {
+        "coins": 0,
+        "kills": 0,
+        "suicides": 0,
+        "score": 0,
+        "steps": 0,
+    }
+    total_rounds = 0
+
+    for block_path in block_paths:
+        stats = load_json(block_path)
+        rounds = extract_rounds(stats)
+        if not rounds:
+            continue
+        agent_stats = target_agent_stats(stats, agent_name)
+        total_rounds += len(rounds)
+        for key in totals:
+            totals[key] += agent_stats.get(key, 0)
+
+    if total_rounds == 0:
+        return _task3_train_metrics(None, agent_name)
+
+    return {
+        "train_coins_per_round": safe_rate(totals["coins"], total_rounds),
+        "train_kills_per_round": safe_rate(totals["kills"], total_rounds),
+        "train_self_kill_rate": safe_rate(totals["suicides"], total_rounds),
+        "train_score_per_round": safe_rate(totals["score"], total_rounds),
+        "train_agent_steps_per_round": safe_rate(totals["steps"], total_rounds),
     }
 
 
 def analyze_task4_run(run_dir, agent_name, opponent_name="rule_based_agent"):
-    """Analyze one Task 4 baseline, fine-tuned, or fresh-trained experiment."""
+    """Analyze one Task 4 baseline, fine-tuned, mixed, or fresh-trained experiment."""
     match = TASK4_RUN_PATTERN.match(run_dir.name)
     if match is None:
         return None
 
     feature_mode, reward_mode, seed, variant = match.groups()
-    train_path = run_dir / "train.json"
     eval_path = run_dir / "eval.json"
 
     if not eval_path.exists():
         print(f"Skipping Task 4 run without eval.json: {run_dir.name}")
         return None
 
-    train_stats = load_json(train_path) if train_path.exists() else None
     eval_stats = load_json(eval_path)
     eval_rounds = extract_rounds(eval_stats)
     if not eval_rounds:
@@ -699,7 +804,7 @@ def analyze_task4_run(run_dir, agent_name, opponent_name="rule_based_agent"):
         "reward": reward_mode,
         "variant": variant,
         "seed": int(seed),
-        **_task3_train_metrics(train_stats, agent_name),
+        **_task4_train_metrics_for_run(run_dir, agent_name),
         "eval_coins_per_round": safe_rate(eval_coins, n_eval_rounds),
         "eval_kills_per_round": safe_rate(eval_kills, n_eval_rounds),
         "eval_self_kill_rate": safe_rate(eval_suicides, n_eval_rounds),
@@ -760,6 +865,13 @@ def print_task4_log_summary(log_path, agent_name, opponent_name="rule_based_agen
     print(f"Kills/bomb: {agent_result['kills_per_bomb']:.3f}")
     print(f"WAIT rate: {100 * agent_result['wait_rate']:.1f}%")
     print(f"Timeout rate: {100 * agent_result['timeout_rate']:.1f}%")
+    if competitive["eval_reversal_rate"] is not None:
+        print(f"Reversal rate: {100 * competitive['eval_reversal_rate']:.1f}%")
+        print(f"Max alternating streak: {competitive['eval_max_alternating_streak']}")
+        print(
+            f"{LONG_OSCILLATION_THRESHOLD}+ step oscillation rate: "
+            f"{100 * competitive['eval_long_oscillation_rate']:.1f}%"
+        )
 
 def analyze_task3_log(log_path, agent_name):
     """
@@ -1177,7 +1289,7 @@ def print_task4_run_table(results):
         "Feature", "Reward", "Variant", "Seed", "Score/r", "Opp score/r",
         "Diff/r", "Win rate", "Survival", "Kill/r", "Opp kill/r",
         "Self-kill", "Killed by opp", "Bombs/r", "Kills/bomb",
-        "Wait rate", "Timeout",
+        "Wait rate", "Timeout", "Reversal", "Max alt", "50+ loop",
     ]
     rows = []
     for result in results:
@@ -1196,6 +1308,9 @@ def print_task4_run_table(results):
             _fmt(result["eval_kills_per_bomb"], decimals=3),
             _fmt(result["eval_wait_rate"], decimals=1, percent=True),
             _fmt(result["timeout_rate"], decimals=1, percent=True),
+            _fmt(result["eval_reversal_rate"], decimals=1, percent=True),
+            _fmt(result["eval_max_alternating_streak"], decimals=0),
+            _fmt(result["eval_long_oscillation_rate"], decimals=1, percent=True),
         ])
     print_text_table("Per-seed results", headers, rows)
 
@@ -1430,7 +1545,7 @@ def print_task4_summary_table(summaries):
         "Feature", "Reward", "Variant", "n", "Score/r", "Opp score/r",
         "Diff/r", "Win rate", "Survival", "Kill/r", "Opp kill/r",
         "Self-kill", "Killed by opp", "Bombs/r", "Kills/bomb",
-        "Wait rate", "Timeout",
+        "Wait rate", "Timeout", "Reversal", "Max alt", "50+ loop",
     ]
     rows = []
     for result in summaries:
@@ -1449,6 +1564,9 @@ def print_task4_summary_table(summaries):
             format_mean_std(result["eval_kills_per_bomb_mean"], result["eval_kills_per_bomb_std"], decimals=3),
             format_mean_std(result["eval_wait_rate_mean"], result["eval_wait_rate_std"], decimals=1, percent=True),
             format_mean_std(result["timeout_rate_mean"], result["timeout_rate_std"], decimals=1, percent=True),
+            format_mean_std(result["eval_reversal_rate_mean"], result["eval_reversal_rate_std"], decimals=1, percent=True),
+            format_mean_std(result["eval_max_alternating_streak_mean"], result["eval_max_alternating_streak_std"], decimals=1),
+            format_mean_std(result["eval_long_oscillation_rate_mean"], result["eval_long_oscillation_rate_std"], decimals=1, percent=True),
         ])
     print_text_table("Aggregated results (mean +/- sample std across seeds)", headers, rows)
 
