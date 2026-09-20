@@ -1,6 +1,6 @@
 # This utility script was generated with assistance from ChatGPT.
 #
-# Summarize Bomberman experiment results for Task 1, Task 2, and Task 3.
+# Summarize Bomberman experiment results for Task 1, Task 2, Task 3, and Task 4.
 #
 # Examples:
 #   python scripts/summarize_experiments.py --task 1 --agent linear_q_agent
@@ -8,6 +8,7 @@
 #   python scripts/summarize_experiments.py --task 2 --agent linear_q_agent
 #   python scripts/summarize_experiments.py --task 2 --agent sarsa_lambda_agent
 #   python scripts/summarize_experiments.py --task 3 --agent sarsa_lambda_agent
+#   python scripts/summarize_experiments.py --task 4 --agent sarsa_lambda_agent
 
 import argparse
 import csv
@@ -53,6 +54,14 @@ TASK3_RUN_PATTERN = re.compile(
     r"^(f[4567])_(sparse|basic|shaped)_seed(\d+)$"
 )
 
+
+# Task 4 result directories explicitly distinguish zero-shot transfer
+# baselines, Task-3-initialized fine-tuning, and fresh Task-4 training.
+# Keep the feature part flexible so later variants such as F8 or F9 are
+# discovered automatically.
+TASK4_RUN_PATTERN = re.compile(
+    r"^(f\d+)_(sparse|basic|shaped)_seed(\d+)_(baseline|finetuned|trained)$"
+)
 
 TASK1_METRICS = [
     "train_avg_coins",
@@ -112,6 +121,41 @@ TASK3_METRICS = [
     "eval_wait_rate",
     "timeout_rate",
 ]
+
+
+TASK4_METRICS = [
+    "train_coins_per_round",
+    "train_kills_per_round",
+    "train_self_kill_rate",
+    "train_score_per_round",
+    "train_agent_steps_per_round",
+
+    "eval_coins_per_round",
+    "eval_kills_per_round",
+    "eval_self_kill_rate",
+    "eval_score_per_round",
+    "eval_agent_steps_per_round",
+    "eval_avg_round_steps",
+    "eval_bombs_per_round",
+    "eval_crates_per_round",
+    "eval_kills_per_bomb",
+    "eval_coins_per_100_steps",
+    "eval_kills_per_100_steps",
+    "eval_wait_rate",
+    "timeout_rate",
+
+    "eval_opponent_coins_per_round",
+    "eval_opponent_kills_per_round",
+    "eval_opponent_self_kill_rate",
+    "eval_opponent_score_per_round",
+    "eval_score_diff_per_round",
+    "eval_deaths_by_opponent_rate",
+    "eval_death_rate",
+    "eval_survival_rate",
+    "eval_score_win_rate",
+    "eval_score_tie_rate",
+]
+
 
 # The game score in the supplied framework uses +1 per coin and +5 per
 # opponent kill. This is only used when a Task 3 evaluation is summarized
@@ -519,6 +563,204 @@ def analyze_task3_run(run_dir, agent_name):
     return result
 
 
+
+def _task4_log_metrics(log_path, agent_name, opponent_name):
+    """Recover Task 4 survival and score-win metrics from eval game.log."""
+    log_path = Path(log_path)
+    empty = {
+        "eval_deaths_by_opponent_rate": None,
+        "eval_death_rate": None,
+        "eval_survival_rate": None,
+        "eval_score_win_rate": None,
+        "eval_score_tie_rate": None,
+    }
+    if not log_path.exists():
+        return empty
+
+    current_round = None
+    rounds = set()
+    target_scores = defaultdict(int)
+    opponent_scores = defaultdict(int)
+    target_death_rounds = set()
+    target_deaths_by_opponent_rounds = set()
+
+    with open(log_path, "r", encoding="utf-8", errors="replace") as file:
+        for line in file:
+            round_match = LOG_ROUND_RE.search(line)
+            if round_match:
+                current_round = int(round_match.group(1))
+                rounds.add(current_round)
+                continue
+
+            if current_round is None:
+                continue
+
+            coin_match = LOG_COIN_RE.search(line)
+            if coin_match:
+                collector = coin_match.group(1)
+                if collector == agent_name:
+                    target_scores[current_round] += GAME_COIN_SCORE
+                elif collector == opponent_name:
+                    opponent_scores[current_round] += GAME_COIN_SCORE
+
+            self_kill_match = LOG_SELF_KILL_RE.search(line)
+            if self_kill_match and self_kill_match.group(1) == agent_name:
+                target_death_rounds.add(current_round)
+
+            kill_match = LOG_KILL_RE.search(line)
+            if kill_match:
+                victim, owner = kill_match.groups()
+                if owner == agent_name and victim != agent_name:
+                    target_scores[current_round] += GAME_KILL_SCORE
+                elif owner == opponent_name and victim != opponent_name:
+                    opponent_scores[current_round] += GAME_KILL_SCORE
+
+                if victim == agent_name and owner != agent_name:
+                    target_death_rounds.add(current_round)
+                    if owner == opponent_name:
+                        target_deaths_by_opponent_rounds.add(current_round)
+
+    n_rounds = len(rounds)
+    if n_rounds == 0:
+        return empty
+
+    wins = 0
+    ties = 0
+    for round_id in rounds:
+        target_score = target_scores[round_id]
+        opponent_score = opponent_scores[round_id]
+        if target_score > opponent_score:
+            wins += 1
+        elif target_score == opponent_score:
+            ties += 1
+
+    death_rate = safe_rate(len(target_death_rounds), n_rounds)
+    return {
+        "eval_deaths_by_opponent_rate": safe_rate(
+            len(target_deaths_by_opponent_rounds), n_rounds
+        ),
+        "eval_death_rate": death_rate,
+        "eval_survival_rate": 1.0 - death_rate,
+        "eval_score_win_rate": safe_rate(wins, n_rounds),
+        "eval_score_tie_rate": safe_rate(ties, n_rounds),
+    }
+
+
+def analyze_task4_run(run_dir, agent_name, opponent_name="rule_based_agent"):
+    """Analyze one Task 4 baseline, fine-tuned, or fresh-trained experiment."""
+    match = TASK4_RUN_PATTERN.match(run_dir.name)
+    if match is None:
+        return None
+
+    feature_mode, reward_mode, seed, variant = match.groups()
+    train_path = run_dir / "train.json"
+    eval_path = run_dir / "eval.json"
+
+    if not eval_path.exists():
+        print(f"Skipping Task 4 run without eval.json: {run_dir.name}")
+        return None
+
+    train_stats = load_json(train_path) if train_path.exists() else None
+    eval_stats = load_json(eval_path)
+    eval_rounds = extract_rounds(eval_stats)
+    if not eval_rounds:
+        print(f"Skipping empty Task 4 evaluation: {run_dir.name}")
+        return None
+
+    eval_agent = target_agent_stats(eval_stats, agent_name)
+    eval_opponent = target_agent_stats(eval_stats, opponent_name)
+    n_eval_rounds = len(eval_rounds)
+
+    eval_coins = eval_agent.get("coins", 0)
+    eval_kills = eval_agent.get("kills", 0)
+    eval_suicides = eval_agent.get("suicides", 0)
+    eval_score = eval_agent.get("score", 0)
+    eval_steps = eval_agent.get("steps", 0)
+    eval_bombs = eval_agent.get("bombs", 0)
+    eval_crates = eval_agent.get("crates", 0)
+    eval_moves = eval_agent.get("moves", 0)
+    eval_invalid = eval_agent.get("invalid", 0)
+    eval_waits = eval_steps - eval_moves - eval_bombs - eval_invalid
+    if eval_waits < 0:
+        raise ValueError(
+            f"Derived negative wait count in {run_dir.name}: {eval_waits}"
+        )
+
+    opponent_coins = eval_opponent.get("coins", 0)
+    opponent_kills = eval_opponent.get("kills", 0)
+    opponent_suicides = eval_opponent.get("suicides", 0)
+    opponent_score = eval_opponent.get("score", 0)
+
+    eval_round_steps = [row["steps"] for row in eval_rounds]
+    timed_out = [row for row in eval_rounds if row["steps"] >= MAX_STEPS]
+
+    result = {
+        "feature": feature_mode.upper(),
+        "reward": reward_mode,
+        "variant": variant,
+        "seed": int(seed),
+        **_task3_train_metrics(train_stats, agent_name),
+        "eval_coins_per_round": safe_rate(eval_coins, n_eval_rounds),
+        "eval_kills_per_round": safe_rate(eval_kills, n_eval_rounds),
+        "eval_self_kill_rate": safe_rate(eval_suicides, n_eval_rounds),
+        "eval_score_per_round": safe_rate(eval_score, n_eval_rounds),
+        "eval_agent_steps_per_round": safe_rate(eval_steps, n_eval_rounds),
+        "eval_avg_round_steps": mean(eval_round_steps),
+        "eval_bombs_per_round": safe_rate(eval_bombs, n_eval_rounds),
+        "eval_crates_per_round": safe_rate(eval_crates, n_eval_rounds),
+        "eval_kills_per_bomb": safe_rate(eval_kills, eval_bombs),
+        "eval_coins_per_100_steps": 100.0 * safe_rate(eval_coins, eval_steps),
+        "eval_kills_per_100_steps": 100.0 * safe_rate(eval_kills, eval_steps),
+        "eval_wait_rate": safe_rate(eval_waits, eval_steps),
+        "timeout_rate": safe_rate(len(timed_out), n_eval_rounds),
+        "eval_opponent_coins_per_round": safe_rate(opponent_coins, n_eval_rounds),
+        "eval_opponent_kills_per_round": safe_rate(opponent_kills, n_eval_rounds),
+        "eval_opponent_self_kill_rate": safe_rate(opponent_suicides, n_eval_rounds),
+        "eval_opponent_score_per_round": safe_rate(opponent_score, n_eval_rounds),
+        "eval_score_diff_per_round": safe_rate(eval_score - opponent_score, n_eval_rounds),
+    }
+    result.update(
+        _task4_log_metrics(
+            run_dir / "eval_logs" / "game.log",
+            agent_name,
+            opponent_name,
+        )
+    )
+    return result
+
+
+def print_task4_log_summary(log_path, agent_name, opponent_name="rule_based_agent"):
+    """Print a quick Task 4 summary directly from game.log."""
+    agent_result = analyze_task3_log(log_path, agent_name)
+    opponent_result = analyze_task3_log(log_path, opponent_name)
+    competitive = _task4_log_metrics(log_path, agent_name, opponent_name)
+
+    print("Task 4 log evaluation")
+    print(f"Agent: {agent_name}")
+    print(f"Opponent: {opponent_name}")
+    print(f"Log: {log_path}")
+    print(f"Rounds: {agent_result['rounds']}")
+    print(f"Agent score/round: {agent_result['score_per_round']:.2f}")
+    print(f"Opponent score/round: {opponent_result['score_per_round']:.2f}")
+    print(
+        "Score differential/round: "
+        f"{agent_result['score_per_round'] - opponent_result['score_per_round']:.2f}"
+    )
+    print(f"Agent kills/round: {agent_result['kills'] / agent_result['rounds']:.2f}")
+    print(f"Opponent kills/round: {opponent_result['kills'] / opponent_result['rounds']:.2f}")
+    if competitive["eval_survival_rate"] is not None:
+        print(f"Survival rate: {100 * competitive['eval_survival_rate']:.1f}%")
+        print(
+            "Deaths by opponent: "
+            f"{100 * competitive['eval_deaths_by_opponent_rate']:.1f}%"
+        )
+        print(f"Score win rate: {100 * competitive['eval_score_win_rate']:.1f}%")
+        print(f"Score tie rate: {100 * competitive['eval_score_tie_rate']:.1f}%")
+    print(f"Bombs/round: {agent_result['bombs_per_round']:.2f}")
+    print(f"Kills/bomb: {agent_result['kills_per_bomb']:.3f}")
+    print(f"WAIT rate: {100 * agent_result['wait_rate']:.1f}%")
+    print(f"Timeout rate: {100 * agent_result['timeout_rate']:.1f}%")
+
 def analyze_task3_log(log_path, agent_name):
     """
     Summarize a Task 3 evaluation directly from a framework game.log file.
@@ -651,6 +893,9 @@ def analyze_run(task, run_dir, agent_name):
     if task == 3:
         return analyze_task3_run(run_dir, agent_name)
 
+    if task == 4:
+        return analyze_task4_run(run_dir, agent_name)
+
     raise ValueError(f"Unsupported task: {task}")
 
 
@@ -661,6 +906,8 @@ def metrics_for_task(task):
         return TASK2_METRICS
     if task == 3:
         return TASK3_METRICS
+    if task == 4:
+        return TASK4_METRICS
     raise ValueError(f"Unsupported task: {task}")
 
 
@@ -674,13 +921,22 @@ def aggregate_results(task, results):
     grouped = defaultdict(list)
 
     for result in results:
-        key = (result["feature"], result["reward"])
+        if task == 4:
+            key = (result["feature"], result["reward"], result["variant"])
+        else:
+            key = (result["feature"], result["reward"])
         grouped[key].append(result)
 
     summaries = []
     metrics = metrics_for_task(task)
 
-    for (feature, reward), runs in grouped.items():
+    for key, runs in grouped.items():
+        if task == 4:
+            feature, reward, variant = key
+        else:
+            feature, reward = key
+            variant = None
+
         row = {
             "feature": feature,
             "reward": reward,
@@ -690,6 +946,8 @@ def aggregate_results(task, results):
                 for run in sorted(runs, key=lambda item: item["seed"])
             ),
         }
+        if task == 4:
+            row["variant"] = variant
 
         for metric in metrics:
             # Task 3 may be eval-only, in which case train metrics are None.
@@ -719,6 +977,7 @@ def aggregate_results(task, results):
         key=lambda row: (
             row["feature"],
             REWARD_ORDER[row["reward"]],
+            row.get("variant", ""),
         )
     )
 
@@ -912,13 +1171,43 @@ def print_task3_run_table(results):
 
     print_text_table("Per-seed results", headers, rows)
 
+
+def print_task4_run_table(results):
+    headers = [
+        "Feature", "Reward", "Variant", "Seed", "Score/r", "Opp score/r",
+        "Diff/r", "Win rate", "Survival", "Kill/r", "Opp kill/r",
+        "Self-kill", "Killed by opp", "Bombs/r", "Kills/bomb",
+        "Wait rate", "Timeout",
+    ]
+    rows = []
+    for result in results:
+        rows.append([
+            result["feature"], result["reward"], result["variant"], str(result["seed"]),
+            _fmt(result["eval_score_per_round"]),
+            _fmt(result["eval_opponent_score_per_round"]),
+            _fmt(result["eval_score_diff_per_round"]),
+            _fmt(result["eval_score_win_rate"], decimals=1, percent=True),
+            _fmt(result["eval_survival_rate"], decimals=1, percent=True),
+            _fmt(result["eval_kills_per_round"]),
+            _fmt(result["eval_opponent_kills_per_round"]),
+            _fmt(result["eval_self_kill_rate"], decimals=1, percent=True),
+            _fmt(result["eval_deaths_by_opponent_rate"], decimals=1, percent=True),
+            _fmt(result["eval_bombs_per_round"]),
+            _fmt(result["eval_kills_per_bomb"], decimals=3),
+            _fmt(result["eval_wait_rate"], decimals=1, percent=True),
+            _fmt(result["timeout_rate"], decimals=1, percent=True),
+        ])
+    print_text_table("Per-seed results", headers, rows)
+
 def print_run_table(task, results):
     if task == 1:
         print_task1_run_table(results)
     elif task == 2:
         print_task2_run_table(results)
-    else:
+    elif task == 3:
         print_task3_run_table(results)
+    else:
+        print_task4_run_table(results)
 
 
 def print_task1_summary_table(summaries):
@@ -1135,13 +1424,43 @@ def print_task3_summary_table(summaries):
     )
 
 
+
+def print_task4_summary_table(summaries):
+    headers = [
+        "Feature", "Reward", "Variant", "n", "Score/r", "Opp score/r",
+        "Diff/r", "Win rate", "Survival", "Kill/r", "Opp kill/r",
+        "Self-kill", "Killed by opp", "Bombs/r", "Kills/bomb",
+        "Wait rate", "Timeout",
+    ]
+    rows = []
+    for result in summaries:
+        rows.append([
+            result["feature"], result["reward"], result["variant"], str(result["n_seeds"]),
+            format_mean_std(result["eval_score_per_round_mean"], result["eval_score_per_round_std"]),
+            format_mean_std(result["eval_opponent_score_per_round_mean"], result["eval_opponent_score_per_round_std"]),
+            format_mean_std(result["eval_score_diff_per_round_mean"], result["eval_score_diff_per_round_std"]),
+            format_mean_std(result["eval_score_win_rate_mean"], result["eval_score_win_rate_std"], decimals=1, percent=True),
+            format_mean_std(result["eval_survival_rate_mean"], result["eval_survival_rate_std"], decimals=1, percent=True),
+            format_mean_std(result["eval_kills_per_round_mean"], result["eval_kills_per_round_std"]),
+            format_mean_std(result["eval_opponent_kills_per_round_mean"], result["eval_opponent_kills_per_round_std"]),
+            format_mean_std(result["eval_self_kill_rate_mean"], result["eval_self_kill_rate_std"], decimals=1, percent=True),
+            format_mean_std(result["eval_deaths_by_opponent_rate_mean"], result["eval_deaths_by_opponent_rate_std"], decimals=1, percent=True),
+            format_mean_std(result["eval_bombs_per_round_mean"], result["eval_bombs_per_round_std"]),
+            format_mean_std(result["eval_kills_per_bomb_mean"], result["eval_kills_per_bomb_std"], decimals=3),
+            format_mean_std(result["eval_wait_rate_mean"], result["eval_wait_rate_std"], decimals=1, percent=True),
+            format_mean_std(result["timeout_rate_mean"], result["timeout_rate_std"], decimals=1, percent=True),
+        ])
+    print_text_table("Aggregated results (mean +/- sample std across seeds)", headers, rows)
+
 def print_summary_table(task, summaries):
     if task == 1:
         print_task1_summary_table(summaries)
     elif task == 2:
         print_task2_summary_table(summaries)
-    else:
+    elif task == 3:
         print_task3_summary_table(summaries)
+    else:
+        print_task4_summary_table(summaries)
 
 
 def run_fieldnames(task):
@@ -1164,6 +1483,9 @@ def run_fieldnames(task):
 
     if task == 3:
         return common + TASK3_METRICS
+
+    if task == 4:
+        return ["feature", "reward", "variant", "seed"] + TASK4_METRICS
 
     return common + [
         "train_avg_coins",
@@ -1189,9 +1511,13 @@ def summary_fieldnames(task):
     fields = [
         "feature",
         "reward",
+    ]
+    if task == 4:
+        fields.append("variant")
+    fields.extend([
         "n_seeds",
         "seeds",
-    ]
+    ])
 
     for metric in metrics_for_task(task):
         fields.extend(
@@ -1238,15 +1564,15 @@ def save_summary_csv(task, summaries, summary_csv):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Summarize Task 1, Task 2, or Task 3 Bomberman experiment results."
+        description="Summarize Task 1, Task 2, Task 3, or Task 4 Bomberman experiment results."
     )
 
     parser.add_argument(
         "--task",
         type=int,
-        choices=[1, 2, 3],
+        choices=[1, 2, 3, 4],
         required=True,
-        help="Project task to summarize: 1, 2, or 3.",
+        help="Project task to summarize: 1, 2, 3, or 4.",
     )
 
     parser.add_argument(
@@ -1261,18 +1587,27 @@ def main():
         type=Path,
         default=None,
         help=(
-            "Task 3 only: summarize one evaluation game.log directly. "
+            "Task 3 or Task 4: summarize one evaluation game.log directly. "
             "Useful when --save-stats was not enabled."
         ),
+    )
+
+    parser.add_argument(
+        "--opponent",
+        default="rule_based_agent",
+        help="Task 4 opponent name for competitive log analysis (default: rule_based_agent).",
     )
 
     args = parser.parse_args()
 
     if args.eval_log is not None:
-        if args.task != 3:
-            parser.error("--eval-log is only supported with --task 3")
-        print_task3_log_summary(args.eval_log, args.agent)
-        return
+        if args.task == 3:
+            print_task3_log_summary(args.eval_log, args.agent)
+            return
+        if args.task == 4:
+            print_task4_log_summary(args.eval_log, args.agent, args.opponent)
+            return
+        parser.error("--eval-log is only supported with --task 3 or --task 4")
 
     result_root, runs_csv, summary_csv = experiment_paths(
         args.task,
@@ -1299,6 +1634,7 @@ def main():
         key=lambda row: (
             row["feature"],
             REWARD_ORDER[row["reward"]],
+            row.get("variant", ""),
             row["seed"],
         )
     )
