@@ -56,11 +56,12 @@ TASK3_RUN_PATTERN = re.compile(
 
 
 # Task 4 result directories explicitly distinguish zero-shot transfer,
-# rule-based fine-tuning, mixed-opponent fine-tuning, and fresh Task-4 training.
+# rule-based fine-tuning, mixed-opponent fine-tuning, opponent-aware tactical
+# fine-tuning, and fresh Task-4 training.
 # Keep the feature part flexible so later variants such as F8 or F9 are
 # discovered automatically.
 TASK4_RUN_PATTERN = re.compile(
-    r"^(f\d+)_(sparse|basic|shaped)_seed(\d+)_(baseline|finetuned|mixed|trained)$"
+    r"^(f\d+)_(sparse|basic|shaped)_seed(\d+)_(baseline|finetuned|mixed|control|tactical|trained)$"
 )
 
 TASK1_METRICS = [
@@ -754,7 +755,7 @@ def _task4_train_metrics_for_run(run_dir, agent_name):
 
 
 def analyze_task4_run(run_dir, agent_name, opponent_name="rule_based_agent"):
-    """Analyze one Task 4 baseline, fine-tuned, mixed, or fresh-trained experiment."""
+    """Analyze one Task 4 baseline, fine-tuned, mixed, control, tactical, or fresh-trained experiment."""
     match = TASK4_RUN_PATTERN.match(run_dir.name)
     if match is None:
         return None
