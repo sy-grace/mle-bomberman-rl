@@ -132,6 +132,19 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertTrue(features[34:38].any())
 
 
+    def test_f7_marks_absent_opponents(self):
+        """Feature Test F7-A2: F7 feature 40 is an opponent-presence indicator."""
+        state = self._game_state()
+        state["coins"] = []
+        state["others"] = []
+
+        features = state_to_features(state, "f7")
+
+        self.assertEqual(features.shape, (41,))
+        self.assertEqual(features[40], 0.0)
+        np.testing.assert_array_equal(features[32:40], np.zeros(8))
+
+
     def test_f7_marks_safe_opponent_bomb(self):
         """Feature Test F7-B: F7 identifies a safe bomb that can hit an opponent."""
         state = self._game_state()
