@@ -892,10 +892,15 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertIn((3, 4), targets)
         self.assertTrue(callbacks.bomb_would_hit_opponent(state["field"], (3, 4), (3, 5)))
 
-    def test_opponent_bomb_target_respects_crates(self):
+    def test_opponent_bomb_target_continues_through_crates(self):
         state = self._game_state()
         state["field"][3, 4] = 1
-        self.assertFalse(callbacks.bomb_would_hit_opponent(state["field"], (3, 3), (3, 5)))
+        state["field"][3, 2] = 0
+
+        targets = callbacks.opponent_bomb_targets(state["field"], [(3, 5)])
+
+        self.assertIn((3, 2), targets)
+        self.assertTrue(callbacks.bomb_would_hit_opponent(state["field"], (3, 3), (3, 5)))
 
 
     def test_f6_rejects_blocked_moves_and_immediate_reversal(self):
