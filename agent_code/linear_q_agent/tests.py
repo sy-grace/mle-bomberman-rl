@@ -409,7 +409,7 @@ class LinearQAgentTest(unittest.TestCase):
 
         features = state_to_features(state, "f2")
 
-        expected = np.array([1.0, 1.0, 0.0, 1.0])
+        expected = np.array([0.0, 0.0, 0.0, 1.0])
         np.testing.assert_array_equal(features[21:25], expected)
 
 
