@@ -1,0 +1,4 @@
+feature,reward,seed,train_coins_per_round,train_kills_per_round,train_self_kill_rate,train_score_per_round,train_agent_steps_per_round,eval_coins_per_round,eval_kills_per_round,eval_self_kill_rate,eval_score_per_round,eval_agent_steps_per_round,eval_avg_round_steps,eval_bombs_per_round,eval_crates_per_round,eval_kills_per_bomb,eval_coins_per_100_steps,eval_kills_per_100_steps,eval_wait_rate,timeout_rate
+F5,shaped,123,7.213333333333333,0.0,0.03166666666666667,7.213333333333333,385.85333333333335,4.67,0.0,0.0,4.67,396.43,396.43,21.58,63.7,0.0,1.1780137729233409,0.0,0.3835481673939914,0.84
+F5,shaped,456,7.155,0.0,0.04833333333333333,7.155,379.28,7.04,0.0,0.0,7.04,390.8,390.8,32.76,96.69,0.0,1.8014329580348005,0.0,0.09298874104401228,0.66
+F5,shaped,2026,7.02,0.0,0.06333333333333334,7.02,373.30833333333334,8.1,0.0,0.0,8.1,396.57,396.57,41.61,112.57,0.0,2.042514562372343,0.0,0.10759764984744181,0.83
