@@ -973,7 +973,7 @@ class LinearQAgentTest(unittest.TestCase):
         state = self._game_state()
         state["coins"] = []
         state["self"] = ("player", 0, False, (3, 3))
-        state["bombs"] = [((3, 3), 2)]
+        state["bombs"] = [((3, 3), 1)]
         state["field"][3, 2] = -1
         state["field"][3, 4] = -1
         state["field"][2, 3] = -1
@@ -984,6 +984,21 @@ class LinearQAgentTest(unittest.TestCase):
 
         self.assertEqual(features[20], 1.0)
         self.assertFalse(features[21:25].any())
+
+
+    def test_escape_directions_allow_timer_plus_one_moves(self):
+        """F6 Escape Test A2: A timer-3 bomb allows a four-step escape."""
+        state = self._game_state()
+        state["coins"] = []
+        state["self"] = ("player", 0, False, (1, 3))
+        state["bombs"] = [((1, 3), 3)]
+        state["field"][1:-1, 1:-1] = -1
+        state["field"][1:6, 3] = 0
+
+        features = state_to_features(state, "f6")
+
+        self.assertEqual(features[20], 1.0)
+        np.testing.assert_array_equal(features[21:25], np.array([0.0, 0.0, 0.0, 1.0]))
 
 
     def test_unrelated_short_timer_bomb_does_not_block_escape(self):
