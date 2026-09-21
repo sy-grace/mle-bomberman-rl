@@ -1895,7 +1895,7 @@ class LinearSARSAAgentTest(unittest.TestCase):
 
         reward = train.reward_from_events(agent, [train.MOVED_AWAY_FROM_OPPONENT_HUNT])
 
-        self.assertAlmostEqual(reward, -3.0)
+        self.assertAlmostEqual(reward, -1.0)
 
 
     def test_f7_does_not_add_hunt_away_event_outside_hunt_mode(self):
@@ -2020,7 +2020,7 @@ class LinearSARSAAgentTest(unittest.TestCase):
     def test_model_start_mode_defaults_to_resume(self):
         """Model Start Test A: Test that the default model start mode is 'resume'."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_SARSAModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.actions_for_feature_mode("f1")), seed=1)
+            model = Linear_SARSAModel(input_size=callbacks.FEATURE_SIZES["f7"], output_size=len(callbacks.actions_for_feature_mode("f7")), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -2058,7 +2058,7 @@ class LinearSARSAAgentTest(unittest.TestCase):
     def test_fresh_training_ignores_existing_checkpoint(self):
         """Model Start Test D: Test that fresh training ignores an existing checkpoint and initializes a new model."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_SARSAModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.actions_for_feature_mode("f1")), seed=1)
+            model = Linear_SARSAModel(input_size=callbacks.FEATURE_SIZES["f7"], output_size=len(callbacks.actions_for_feature_mode("f7")), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -2076,7 +2076,7 @@ class LinearSARSAAgentTest(unittest.TestCase):
     def test_resume_training_loads_existing_checkpoint(self):
         """Model Start Test E: Test that resume training loads an existing checkpoint when available."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_SARSAModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.actions_for_feature_mode("f1")), seed=1)
+            model = Linear_SARSAModel(input_size=callbacks.FEATURE_SIZES["f7"], output_size=len(callbacks.actions_for_feature_mode("f7")), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -2094,7 +2094,7 @@ class LinearSARSAAgentTest(unittest.TestCase):
     def test_evaluation_loads_checkpoint_independent_of_start_mode(self):
         """Model Start Test F: Test that evaluation loads the checkpoint regardless of the training start mode."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_SARSAModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.actions_for_feature_mode("f1")), seed=1)
+            model = Linear_SARSAModel(input_size=callbacks.FEATURE_SIZES["f7"], output_size=len(callbacks.actions_for_feature_mode("f7")), seed=1)
             model.weights[:] = 42.0
 
             with open("my-saved-model.pt", "wb") as file:
@@ -2119,10 +2119,10 @@ class LinearSARSAAgentTest(unittest.TestCase):
                     callbacks.setup(agent)
 
 
-    def test_feature_mode_defaults_to_f1(self):
-        """Feature Mode Test A: Test that the default feature mode is F1 with 11 features."""
+    def test_feature_mode_defaults_to_f7(self):
+        """Feature Mode Test A: Test that the default feature mode is F7 with 38 features."""
         with tempfile.TemporaryDirectory() as directory, temporary_working_directory(directory):
-            model = Linear_SARSAModel(input_size=callbacks.FEATURE_SIZES["f1"], output_size=len(callbacks.actions_for_feature_mode("f1")), seed=1)
+            model = Linear_SARSAModel(input_size=callbacks.FEATURE_SIZES["f7"], output_size=len(callbacks.actions_for_feature_mode("f7")), seed=1)
 
             with open("my-saved-model.pt", "wb") as file:
                 pickle.dump({"model": model, "epsilon": 0.25}, file)
@@ -2132,8 +2132,8 @@ class LinearSARSAAgentTest(unittest.TestCase):
             with patch.dict(os.environ, {}, clear=True):
                 callbacks.setup(agent)
 
-            self.assertEqual(agent.feature_mode, "f1")
-            self.assertEqual(agent.feature_size, 11)
+            self.assertEqual(agent.feature_mode, "f7")
+            self.assertEqual(agent.feature_size, 38)
 
 
     def test_feature_mode_f0_creates_seven_feature_model(self):
