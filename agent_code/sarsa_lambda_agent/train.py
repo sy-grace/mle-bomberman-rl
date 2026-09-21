@@ -34,6 +34,7 @@ SAFE_OPPONENT_BOMB_DROPPED = "SAFE_OPPONENT_BOMB_DROPPED"
 MOVED_AWAY_FROM_OPPONENT = "MOVED_AWAY_FROM_OPPONENT"
 MOVED_TOWARDS_OPPONENT_HUNT = "MOVED_TOWARDS_OPPONENT_HUNT"
 SAFE_OPPONENT_BOMB_DROPPED_HUNT = "SAFE_OPPONENT_BOMB_DROPPED_HUNT"
+MOVED_AWAY_FROM_OPPONENT_HUNT = "MOVED_AWAY_FROM_OPPONENT_HUNT"
 
 SPARSE_REWARDS = {
     e.COIN_COLLECTED: +10
@@ -62,13 +63,16 @@ SHAPING_EXTRA_REWARDS = {
     SAFE_OPPONENT_BOMB_DROPPED: +0.5,
     MOVED_AWAY_FROM_OPPONENT: -0.5,
     MOVED_TOWARDS_OPPONENT_HUNT: +3.0,
-    SAFE_OPPONENT_BOMB_DROPPED_HUNT: +1.0
+    SAFE_OPPONENT_BOMB_DROPPED_HUNT: +1.0,
 }
+
+HUNT_EXTRA_REWARDS = {MOVED_AWAY_FROM_OPPONENT_HUNT: -1.0}
 
 REWARD_CONFIGS = {
     "sparse": SPARSE_REWARDS, 
     "basic": {**SPARSE_REWARDS, **BASIC_EXTRA_REWARDS}, 
-    "shaped": {**SPARSE_REWARDS, **BASIC_EXTRA_REWARDS, **SHAPING_EXTRA_REWARDS}
+    "shaped": {**SPARSE_REWARDS, **BASIC_EXTRA_REWARDS, **SHAPING_EXTRA_REWARDS},
+    "hunt_extra": {**SPARSE_REWARDS, **BASIC_EXTRA_REWARDS, **SHAPING_EXTRA_REWARDS, **HUNT_EXTRA_REWARDS},
 }
 
 ACTION_TO_INDEX = {
@@ -94,14 +98,14 @@ def has_actionable_navigation_move(game_state, state, feature_mode):
         path_vectors.append(coin_path)
 
     # Crate navigation is used only when no visible coin exists, matching the existing crate reward shaping.
-    if feature_mode in {"f2", "f3", "f4", "f5", "f6", "f7"} and not game_state["coins"]:
+    if feature_mode in {"f2", "f3", "f4", "f5", "f6", "f7", "f8"} and not game_state["coins"]:
         crate_path = state[16:20]
 
         if crate_path.any():
             path_vectors.append(crate_path)
 
     # Opponent hunting
-    if feature_mode in {"f5", "f6", "f7"}:
+    if feature_mode in {"f5", "f6", "f7", "f8"}:
         opponent_path = state[31:35]
 
         if opponent_path.any():
@@ -211,7 +215,7 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     next_state = state_to_features(new_game_state, self.feature_mode)
 
     # Custom event: opponent hunting
-    if self.feature_mode in {"f5", "f6", "f7"}:
+    if self.feature_mode in {"f5", "f6", "f7", "f8"}:
         # Reward moving along the shortest path toward an opponent.
         # F5 features 31:35 = [UP, DOWN, LEFT, RIGHT]
         opponent_path = state[31:35]
@@ -232,34 +236,39 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
 
             moved_index = direction_to_index.get((dx, dy))
 
-            # Only reward an actual successful movement.
-            if moved_index is not None and opponent_path[moved_index] == 1.0:
-                if self.feature_mode in {"f7"} and is_hunt_mode(old_game_state):
-                    events.append(MOVED_TOWARDS_OPPONENT_HUNT)
-                else:
-                    events.append(MOVED_TOWARDS_OPPONENT)
+            # Only shape an actual successful movement.
+            if moved_index is not None:
+                hunt_mode = self.feature_mode in {"f7", "f8"} and is_hunt_mode(old_game_state)
+
+                if opponent_path[moved_index] == 1.0:
+                    if hunt_mode:
+                        events.append(MOVED_TOWARDS_OPPONENT_HUNT)
+                    else:
+                        events.append(MOVED_TOWARDS_OPPONENT)
+                elif hunt_mode:
+                    events.append(MOVED_AWAY_FROM_OPPONENT_HUNT)
 
         # Reward a bomb that currently threatens an opponent and still leaves an escape route.
         if self_action == "BOMB" and state[35] == 1.0:
-            if self.feature_mode in {"f7"} and is_hunt_mode(old_game_state):
+            if self.feature_mode in {"f7", "f8"} and is_hunt_mode(old_game_state):
                 events.append(SAFE_OPPONENT_BOMB_DROPPED_HUNT)
             else:
                 events.append(SAFE_OPPONENT_BOMB_DROPPED)
 
     # Custom event: safe and useful bomb placement
-    if self.feature_mode in {"f4", "f5", "f6", "f7"} and self_action == "BOMB" and state[26] == 1.0:
+    if self.feature_mode in {"f4", "f5", "f6", "f7", "f8"} and self_action == "BOMB" and state[26] == 1.0:
         events.append(SAFE_USEFUL_BOMB_DROPPED)
 
     # Bomb danger status
-    old_in_danger = self.feature_mode in {"f2", "f3", "f4", "f5", "f6", "f7"} and state[20] == 1.0
-    new_in_danger = self.feature_mode in {"f2", "f3", "f4", "f5", "f6", "f7"} and next_state[20]  == 1.0
+    old_in_danger = self.feature_mode in {"f2", "f3", "f4", "f5", "f6", "f7", "f8"} and state[20] == 1.0
+    new_in_danger = self.feature_mode in {"f2", "f3", "f4", "f5", "f6", "f7", "f8"} and next_state[20]  == 1.0
 
     # Custom event: escaped bomb danger
     if old_in_danger and not new_in_danger:
         events.append(ESCAPED_BOMB_DANGER)
 
     # Custom event: move along crate path
-    if self.feature_mode in {"f2", "f3", "f4", "f5", "f6", "f7"}:
+    if self.feature_mode in {"f2", "f3", "f4", "f5", "f6", "f7", "f8"}:
         crate_path = state[16:20]
 
         # Only search for crates when there is no visible coin and escaping a bomb is not currently more important.
@@ -380,5 +389,3 @@ def is_hunt_mode( game_state):
         return False
 
     return len(game_state.get("coins", [])) == 0 and len(game_state.get("others", [])) > 0
-
-
