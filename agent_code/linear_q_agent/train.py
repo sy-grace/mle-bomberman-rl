@@ -155,6 +155,13 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
     if old_in_danger and not new_in_danger:
         events.append(ESCAPED_BOMB_DANGER)
 
+    direction_to_index = {
+        (0, -1): 0, # UP
+        (0, 1): 1,  # DOWN
+        (-1, 0): 2, # LEFT
+        (1, 0): 3   # RIGHT
+    }
+
     # Custom event: move along crate path
     if self.feature_mode in {"f2", "f3", "f4", "f5", "f6", "f7"}:
         crate_path = state[16:20]
@@ -167,13 +174,6 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
             dx = new_x - old_x
             dy = new_y - old_y
 
-            direction_to_index = {
-                (0, -1): 0, # UP
-                (0, 1): 1,  # DOWN
-                (-1, 0): 2, # LEFT
-                (1, 0): 3   # RIGHT
-            }
-
             moved_index = direction_to_index.get((dx, dy))
 
             # Only shape successful movement, not WAIT/BOMB/invalid movement.
@@ -183,13 +183,21 @@ def game_events_occurred(self, old_game_state: dict, self_action: str, new_game_
                 else:
                     events.append(MOVED_AWAY_FROM_CRATE)
 
-    if self.feature_mode == "f7" and not old_in_danger and state[40] == 1.0 and next_state[40] == 1.0:
-        old_opponent_distance = abs(state[32]) + abs(state[33])
-        new_opponent_distance = abs(next_state[32]) + abs(next_state[33])
-        if old_opponent_distance > 0:
-            if new_opponent_distance < old_opponent_distance:
+    if self.feature_mode == "f7" and not old_in_danger and state[40] == 1.0:
+        opponent_path = state[34:38]
+        if opponent_path.any():
+            old_x, old_y = old_game_state["self"][3]
+            new_x, new_y = new_game_state["self"][3]
+
+            dx = new_x - old_x
+            dy = new_y - old_y
+
+            moved_index = direction_to_index.get((dx, dy))
+
+            # Only shape successful movement, not WAIT/BOMB/invalid movement.
+            if moved_index is not None and opponent_path[moved_index] == 1.0:
                 events.append(MOVED_TOWARDS_OPPONENT)
-            elif new_opponent_distance > old_opponent_distance:
+            elif moved_index is not None:
                 events.append(MOVED_AWAY_FROM_OPPONENT)
 
     # Custom events based on coin proximity and movement

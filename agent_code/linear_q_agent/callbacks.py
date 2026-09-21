@@ -49,7 +49,7 @@ def setup(self):
     if self.model_start_mode not in {"resume", "fresh"}:
         raise ValueError("MODEL_START_MODE must be either 'resume' or 'fresh'.")
 
-    self.feature_mode = os.getenv("FEATURE_MODE", "f1")
+    self.feature_mode = os.getenv("FEATURE_MODE", "f7")
 
     if self.feature_mode not in FEATURE_SIZES:
         raise ValueError("FEATURE_MODE must be one of 'f0', 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', or 'f7'.")
@@ -143,6 +143,7 @@ def act(self, game_state: dict) -> str:
         field=game_state["field"],
         bombs=game_state["bombs"],
         explosion_map=game_state.get("explosion_map"),
+        opponent_positions=opponent_positions,
         opponent_path=opponent_path,
         opponent_bomb_target=opponent_bomb_target,
     )
@@ -207,6 +208,7 @@ def action_candidates(
     field=None,
     bombs=(),
     explosion_map=None,
+    opponent_positions=(),
     opponent_path=None,
     opponent_bomb_target=False,
 ):
@@ -223,7 +225,13 @@ def action_candidates(
     if features[31] <= 0.0 and not opponent_bomb_target and not opponent_bomb_available and "BOMB" in candidates:
         candidates.remove("BOMB")
     elif "BOMB" in candidates and field is not None and position is not None:
-        if not can_escape_after_bomb(field, position, bombs, explosion_map):
+        if not can_escape_after_bomb(
+            field,
+            position,
+            bombs,
+            explosion_map,
+            blocked_positions=opponent_positions,
+        ):
             candidates.remove("BOMB")
 
     # Never deliberately choose a blocked movement. Keep WAIT as a fallback.
@@ -237,6 +245,23 @@ def action_candidates(
         action for action in candidates
         if action not in movement_features or features[movement_features[action]] == 1.0
     ]
+
+    if position is not None and opponent_positions:
+        opponent_tiles = set(opponent_positions)
+        offsets = {
+            "UP": (0, -1),
+            "DOWN": (0, 1),
+            "LEFT": (-1, 0),
+            "RIGHT": (1, 0),
+        }
+        candidates = [
+            action for action in candidates
+            if action not in offsets
+            or (
+                position[0] + offsets[action][0],
+                position[1] + offsets[action][1],
+            ) not in opponent_tiles
+        ]
 
     if field is not None and position is not None and not in_danger:
         danger_tiles = bomb_danger_tiles(field, bombs, explosion_map)
@@ -335,11 +360,14 @@ def action_candidates(
         if feature_mode == "f6" and opponent_path is not None and opponent_path.any():
             target_path = opponent_path
         elif feature_mode == "f7":
+            coin_feature_path = features[7:11]
             opponent_feature_path = features[34:38]
             target_path = (
-                opponent_feature_path
+                coin_feature_path
+                if coin_feature_path.any()
+                else opponent_feature_path
                 if opponent_feature_path.any()
-                else coin_path if coin_path.any() else crate_path
+                else crate_path
             )
         else:
             target_path = coin_path if coin_path.any() else crate_path
@@ -418,6 +446,7 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
     bombs = game_state["bombs"] # (x, y), timer
     coins = game_state["coins"] # x, y
     agent = game_state["self"] # name, score, bombs_left, (x, y)
+    opponents = [tuple(opponent[3]) for opponent in game_state.get("others", [])]
 
     agent_x, agent_y = agent[3]
 
@@ -441,19 +470,22 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
     features[0] = 1
 
     # Check the obstacle location around the agent
+    opponent_tiles = set(opponents)
     UP = field[agent_x, agent_y - 1]
     DOWN = field[agent_x, agent_y + 1]
     LEFT = field[agent_x - 1, agent_y]
     RIGHT = field[agent_x + 1, agent_y]
 
-    if UP == 0:
+    if UP == 0 and (agent_x, agent_y - 1) not in opponent_tiles:
         features[1] = 1
-    if DOWN == 0:
+    if DOWN == 0 and (agent_x, agent_y + 1) not in opponent_tiles:
         features[2] = 1
-    if LEFT == 0:
+    if LEFT == 0 and (agent_x - 1, agent_y) not in opponent_tiles:
         features[3] = 1
-    if RIGHT == 0:
+    if RIGHT == 0 and (agent_x + 1, agent_y) not in opponent_tiles:
         features[4] = 1
+
+    path_field = field_with_blocked_positions(field, opponent_tiles)
 
     # Calculate the distance (dx, dy) between the agent and the coin, and normalize dx, dy
     closest_distance = field_x + field_y
@@ -478,7 +510,7 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
                 closest_coin = coin
 
         if closest_coin is not None and feature_mode in {"f1", "f2", "f3", "f4", "f5", "f6", "f7"}:
-            path_directions = shortest_path_directions(field, agent[3], closest_coin)
+            path_directions = shortest_path_directions(path_field, agent[3], closest_coin)
             features[7:11] = path_directions
 
     if feature_mode in {"f2", "f3", "f4", "f5", "f6", "f7"}:
@@ -494,8 +526,8 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
                 features[12 + i] = 1.0
 
         # 16:20: path to crates [UP, DOWN, LEFT, RIGHT]
-        crate_targets = crate_placement_targets(field)
-        features[16:20] = shortest_path_directions_to_any(field, agent[3], crate_targets)
+        crate_targets = crate_placement_targets(field) - opponent_tiles
+        features[16:20] = shortest_path_directions_to_any(path_field, agent[3], crate_targets)
 
         # 20: bomb_danger
         explosion_map = game_state.get("explosion_map")
@@ -518,17 +550,23 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
                 escape_field[bomb_x, bomb_y] = -1
 
         if features[20] == 1.0:
-            features[21:25] = escape_directions(
-                escape_field,
-                agent[3],
-                bombs,
-                explosion_map,
-                danger_tiles,
-            )
+            if feature_mode == "f6":
+                features[21:25] = escape_directions(escape_field, agent[3], bombs, explosion_map, danger_tiles,)
+            else:
+                features[21:25] = shortest_path_directions_to_any(escape_field, agent[3], safe_targets)
 
         # 25: safe to bomb
         if feature_mode in {"f3", "f4", "f5", "f6", "f7"}:
-            safe_to_bomb = bool(agent[2] and can_escape_after_bomb(field, agent[3], bombs, explosion_map))
+            safe_to_bomb = bool(
+                agent[2]
+                and can_escape_after_bomb(
+                    field,
+                    agent[3],
+                    bombs,
+                    explosion_map,
+                    blocked_positions=opponent_tiles,
+                )
+            )
             features[25] = float(safe_to_bomb)
 
         # 26: safe and useful bomb
@@ -544,10 +582,17 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
 
         # 31: bomb crate-yield feature
         if feature_mode in {"f6", "f7"}:
-            features[31] = safe_bomb_crate_yield(field, agent[3], bombs, explosion_map, agent[2])
+            features[31] = safe_bomb_crate_yield(
+                field,
+                agent[3],
+                bombs,
+                explosion_map,
+                agent[2],
+                blocked_positions=opponent_tiles,
+            )
 
         if feature_mode == "f7":
-            opponents = [tuple(opponent[3]) for opponent in game_state.get("others", [])]
+            features[40] = float(bool(opponents))
             closest_opponent = min(
                 opponents,
                 key=lambda opponent: abs(opponent[0] - agent_x) + abs(opponent[1] - agent_y),
@@ -557,7 +602,7 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
                 features[32] = (closest_opponent[0] - agent_x) / (field_x - 1)
                 features[33] = (closest_opponent[1] - agent_y) / (field_y - 1)
                 features[34:38] = shortest_path_directions_to_any(
-                    field,
+                    path_field,
                     agent[3],
                     opponent_bomb_targets(field, opponents) - {agent[3]},
                 )
@@ -568,7 +613,6 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
                     safe_to_bomb
                     and any(bomb_would_hit_opponent(field, agent[3], opponent) for opponent in opponents)
                 )
-                features[40] = 1.0
 
     # Return the final feature vector
     return features
@@ -577,6 +621,18 @@ def state_to_features(game_state: dict, feature_mode: str, previous_action=None)
 def shortest_path_directions(field, start, target):
     """Return valid first-step directions along shortest paths from start to target."""
     return shortest_path_directions_to_any(field, start, {target})
+
+
+def field_with_blocked_positions(field, blocked_positions):
+    """Return a field copy where temporarily occupied free tiles are not walkable."""
+    if not blocked_positions:
+        return field
+
+    blocked_field = field.copy()
+    for x, y in blocked_positions:
+        if 0 <= x < blocked_field.shape[0] and 0 <= y < blocked_field.shape[1] and blocked_field[x, y] == 0:
+            blocked_field[x, y] = -1
+    return blocked_field
 
 
 def opponent_bomb_targets(field, opponents):
@@ -593,8 +649,6 @@ def opponent_bomb_targets(field, opponents):
                     break
                 if field[x, y] == 0:
                     targets.add((x, y))
-                if field[x, y] == 1:
-                    break
     return targets
 
 
@@ -618,8 +672,6 @@ def bomb_would_hit_opponent(field, start, opponent):
         x = start[0] + direction[0] * step
         y = start[1] + direction[1] * step
         if field[x, y] == -1:
-            return False
-        if field[x, y] == 1 and step < distance:
             return False
     return True
 
@@ -664,7 +716,6 @@ def shortest_path_directions_to_any(field, start, targets):
         distances[target] = 0
         queue.append(target)
 
-    # BFS starting from the target
     while queue:
         x, y = queue.popleft()
 
@@ -733,13 +784,16 @@ def bomb_danger_tiles(field, bombs, explosion_map=None):
     return danger_tiles
 
 
-def can_escape_after_bomb(field, start, bombs, explosion_map=None):
+def can_escape_after_bomb(field, start, bombs, explosion_map=None, blocked_positions=()):
     """Return True if a bomb placed at start still allows escape within BOMB_TIMER moves."""
     hypothetical_bombs = list(bombs) + [(start, BOMB_TIMER)]
     danger_tiles = bomb_danger_tiles(field, hypothetical_bombs, explosion_map)
     escape_field = field.copy()
     for position, _timer in bombs:
         if position != start:
+            escape_field[position] = -1
+    for position in blocked_positions:
+        if position != start and escape_field[position] == 0:
             escape_field[position] = -1
     return bool(escape_directions(
         escape_field,
@@ -750,21 +804,27 @@ def can_escape_after_bomb(field, start, bombs, explosion_map=None):
     ).any())
 
 
+def escape_deadline(field, start, bombs, explosion_map=None):
+    """Return the number of moves available before the current danger resolves."""
+    deadlines = [
+        timer + 1 for bomb, timer in bombs
+        if start in bomb_danger_tiles(field, [(bomb, timer)])
+    ]
+    if explosion_map is not None and explosion_map[start] > 0:
+        deadlines.append(1)
+    if not deadlines:
+        return None
+    return min(deadlines)
+
+
 def escape_directions(field, start, bombs, explosion_map=None, danger_tiles=None):
     """Return first moves that reach a safe tile before the relevant bomb explodes."""
     if danger_tiles is None:
         danger_tiles = bomb_danger_tiles(field, bombs, explosion_map)
 
-    relevant_timers = [
-        timer for bomb, timer in bombs
-        if start in bomb_danger_tiles(field, [(bomb, timer)])
-    ]
-    if explosion_map is not None and explosion_map[start] > 0:
-        relevant_timers.append(1)
-    if not relevant_timers:
+    max_distance = escape_deadline(field, start, bombs, explosion_map)
+    if max_distance is None:
         return np.zeros(4)
-
-    max_distance = min(relevant_timers)
     if max_distance < 1:
         return np.zeros(4)
 
@@ -815,16 +875,10 @@ def escape_directions(field, start, bombs, explosion_map=None, danger_tiles=None
 def escape_path(field, start, bombs, explosion_map=None):
     """Return a shortest timed path to safety, expressed as movement actions."""
     danger_tiles = bomb_danger_tiles(field, bombs, explosion_map)
-    relevant_timers = [
-        timer for bomb, timer in bombs
-        if start in bomb_danger_tiles(field, [(bomb, timer)])
-    ]
-    if explosion_map is not None and explosion_map[start] > 0:
-        relevant_timers.append(1)
-    if not relevant_timers:
+    max_distance = escape_deadline(field, start, bombs, explosion_map)
+    if max_distance is None:
         return []
 
-    max_distance = min(relevant_timers)
     existing_bomb_tiles = {position for position, _timer in bombs}
     offsets_to_actions = dict(zip(DIRECTIONS, ("UP", "DOWN", "LEFT", "RIGHT")))
     queue = deque([(start, 0, [])])
@@ -880,14 +934,20 @@ def bomb_would_destroy_crate(field, start):
     return False
 
 
-def safe_bomb_crate_yield(field, start, bombs, explosion_map, bomb_available):
+def safe_bomb_crate_yield(field, start, bombs, explosion_map, bomb_available, blocked_positions=()):
     """Return the normalized number of crates that a bomb placed at the current position would destroy, provided that placing the bomb is safe."""
     # No bomb can be placed.
     if not bomb_available:
         return 0.0
 
     # Do not encourage bombing if the agent cannot escape safely.
-    if not can_escape_after_bomb(field, start, bombs, explosion_map): 
+    if not can_escape_after_bomb(
+        field,
+        start,
+        bombs,
+        explosion_map,
+        blocked_positions=blocked_positions,
+    ):
         return 0.0
 
     crate_count = 0

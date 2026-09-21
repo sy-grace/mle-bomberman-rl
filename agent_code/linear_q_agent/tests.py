@@ -132,6 +132,19 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertTrue(features[34:38].any())
 
 
+    def test_f7_marks_absent_opponents(self):
+        """Feature Test F7-A2: F7 feature 40 is an opponent-presence indicator."""
+        state = self._game_state()
+        state["coins"] = []
+        state["others"] = []
+
+        features = state_to_features(state, "f7")
+
+        self.assertEqual(features.shape, (41,))
+        self.assertEqual(features[40], 0.0)
+        np.testing.assert_array_equal(features[32:40], np.zeros(8))
+
+
     def test_f7_marks_safe_opponent_bomb(self):
         """Feature Test F7-B: F7 identifies a safe bomb that can hit an opponent."""
         state = self._game_state()
@@ -178,6 +191,78 @@ class LinearQAgentTest(unittest.TestCase):
         )
 
         self.assertIn("BOMB", candidates)
+
+
+    def test_f7_marks_adjacent_opponent_tile_as_blocked(self):
+        """Feature Test F7-F: Opponent-occupied tiles are not valid movement tiles."""
+        state = self._game_state()
+        state["coins"] = []
+        state["others"] = [("rule_based_agent", 0, True, (4, 3))]
+
+        features = state_to_features(state, "f7")
+
+        self.assertEqual(features[4], 0.0) # RIGHT is occupied by the opponent.
+
+
+    def test_f7_paths_around_opponent_occupied_tiles(self):
+        """Feature Test F7-G: Shortest-path features do not route through opponents."""
+        state = self._game_state()
+        state["self"] = ("player", 0, True, (2, 3))
+        state["coins"] = [(4, 3)]
+        state["others"] = [("rule_based_agent", 0, True, (3, 3))]
+
+        features = state_to_features(state, "f7")
+
+        self.assertEqual(features[10], 0.0) # RIGHT would collide with the opponent.
+        self.assertTrue(features[7] == 1.0 or features[8] == 1.0)
+
+
+    def test_f7_action_candidates_reject_opponent_collision(self):
+        """F7 Action Test A: F7 never deliberately steps onto an occupied opponent tile."""
+        features = np.zeros(callbacks.FEATURE_SIZES["f7"])
+        features[1:5] = 1.0
+
+        candidates = callbacks.action_candidates(
+            features,
+            callbacks.actions_for_feature_mode("f7"),
+            "f7",
+            position=(3, 3),
+            opponent_positions=[(4, 3)],
+        )
+
+        self.assertNotIn("RIGHT", candidates)
+
+
+    def test_f7_prioritizes_coins_over_opponent_route(self):
+        """F7 should collect a visible coin before pursuing a combat route."""
+        features = np.zeros(callbacks.FEATURE_SIZES["f7"])
+        features[1:5] = 1.0
+        features[7:11] = [0.0, 0.0, 0.0, 1.0]  # Coin is to the RIGHT.
+        features[34:38] = [1.0, 0.0, 0.0, 0.0]  # Opponent route is UP.
+
+        candidates = callbacks.action_candidates(
+            features,
+            callbacks.actions_for_feature_mode("f7"),
+            "f7",
+            position=(3, 3),
+        )
+
+        self.assertEqual(candidates, ["RIGHT"])
+
+
+    def test_f7_does_not_mark_opponent_blocked_escape_as_safe(self):
+        """Bomb safety must not rely on an escape path through an opponent."""
+        field = np.full((7, 7), -1, dtype=int)
+        field[1:-1, 1:-1] = 0
+
+        self.assertFalse(
+            callbacks.can_escape_after_bomb(
+                field,
+                (3, 3),
+                [],
+                blocked_positions={(3, 2), (3, 4), (2, 3), (4, 3)},
+            )
+        )
 
 
     def test_f1_uses_task1_action_space(self):
@@ -337,7 +422,7 @@ class LinearQAgentTest(unittest.TestCase):
 
         features = state_to_features(state, "f2")
 
-        expected = np.array([1.0, 1.0, 0.0, 1.0])
+        expected = np.array([0.0, 0.0, 0.0, 1.0])
         np.testing.assert_array_equal(features[21:25], expected)
 
 
@@ -820,10 +905,15 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertIn((3, 4), targets)
         self.assertTrue(callbacks.bomb_would_hit_opponent(state["field"], (3, 4), (3, 5)))
 
-    def test_opponent_bomb_target_respects_crates(self):
+    def test_opponent_bomb_target_continues_through_crates(self):
         state = self._game_state()
         state["field"][3, 4] = 1
-        self.assertFalse(callbacks.bomb_would_hit_opponent(state["field"], (3, 3), (3, 5)))
+        state["field"][3, 2] = 0
+
+        targets = callbacks.opponent_bomb_targets(state["field"], [(3, 5)])
+
+        self.assertIn((3, 2), targets)
+        self.assertTrue(callbacks.bomb_would_hit_opponent(state["field"], (3, 3), (3, 5)))
 
 
     def test_f6_rejects_blocked_moves_and_immediate_reversal(self):
@@ -901,7 +991,7 @@ class LinearQAgentTest(unittest.TestCase):
         state = self._game_state()
         state["coins"] = []
         state["self"] = ("player", 0, False, (3, 3))
-        state["bombs"] = [((3, 3), 2)]
+        state["bombs"] = [((3, 3), 1)]
         state["field"][3, 2] = -1
         state["field"][3, 4] = -1
         state["field"][2, 3] = -1
@@ -912,6 +1002,21 @@ class LinearQAgentTest(unittest.TestCase):
 
         self.assertEqual(features[20], 1.0)
         self.assertFalse(features[21:25].any())
+
+
+    def test_escape_directions_allow_timer_plus_one_moves(self):
+        """F6 Escape Test A2: A timer-3 bomb allows a four-step escape."""
+        state = self._game_state()
+        state["coins"] = []
+        state["self"] = ("player", 0, False, (1, 3))
+        state["bombs"] = [((1, 3), 3)]
+        state["field"][1:-1, 1:-1] = -1
+        state["field"][1:6, 3] = 0
+
+        features = state_to_features(state, "f6")
+
+        self.assertEqual(features[20], 1.0)
+        np.testing.assert_array_equal(features[21:25], np.array([0.0, 0.0, 0.0, 1.0]))
 
 
     def test_unrelated_short_timer_bomb_does_not_block_escape(self):
@@ -1572,6 +1677,102 @@ class LinearQAgentTest(unittest.TestCase):
         self.assertNotIn(train.MOVED_AWAY_FROM_CRATE, events)
 
 
+    def test_f7_adds_towards_opponent_event_for_recommended_move(self):
+        """Reward Test Q2: F7 rewards successful movement along the old opponent path."""
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+        old_state["self"] = ("player", 0, True, (1, 3))
+        old_state["others"] = [("opponent", 0, True, (5, 3))]
+        new_state["self"] = ("player", 0, True, (2, 3))
+        new_state["others"] = [("opponent", 0, True, (5, 3))]
+        new_state["step"] = 2
+
+        cached_state = state_to_features(old_state, "f7")
+
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f7",
+            cached_features=cached_state,
+        )
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "RIGHT", new_state, events)
+
+        self.assertIn(train.MOVED_TOWARDS_OPPONENT, events)
+        self.assertNotIn(train.MOVED_AWAY_FROM_OPPONENT, events)
+
+
+    def test_f7_adds_away_from_opponent_event_for_wrong_move(self):
+        """Reward Test Q3: F7 penalizes successful movement away from the old opponent path."""
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+        old_state["self"] = ("player", 0, True, (1, 3))
+        old_state["others"] = [("opponent", 0, True, (5, 3))]
+        new_state["self"] = ("player", 0, True, (1, 2))
+        new_state["others"] = [("opponent", 0, True, (5, 3))]
+        new_state["step"] = 2
+
+        cached_state = state_to_features(old_state, "f7")
+
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f7",
+            cached_features=cached_state,
+        )
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "UP", new_state, events)
+
+        self.assertNotIn(train.MOVED_TOWARDS_OPPONENT, events)
+        self.assertIn(train.MOVED_AWAY_FROM_OPPONENT, events)
+
+
+    def test_f7_does_not_reward_wait_when_opponent_moves_closer(self):
+        """Reward Test Q4: F7 opponent shaping depends on the agent's movement."""
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+        old_state["self"] = ("player", 0, True, (1, 3))
+        old_state["others"] = [("opponent", 0, True, (5, 3))]
+        new_state["self"] = ("player", 0, True, (1, 3))
+        new_state["others"] = [("opponent", 0, True, (4, 3))]
+        new_state["step"] = 2
+
+        cached_state = state_to_features(old_state, "f7")
+
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f7",
+            cached_features=cached_state,
+        )
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0):
+            train.game_events_occurred(agent, old_state, "WAIT", new_state, events)
+
+        self.assertNotIn(train.MOVED_TOWARDS_OPPONENT, events)
+        self.assertNotIn(train.MOVED_AWAY_FROM_OPPONENT, events)
+
+
     def test_shaped_reward_penalizes_oscillation(self):
         """Reward Test R: Only shaped reward assigns a penalty to oscillation."""
         agent = SimpleNamespace(logger=Mock())
@@ -2108,7 +2309,7 @@ class LinearQAgentTest(unittest.TestCase):
                 callbacks.setup(agent)
 
             self.assertEqual(agent.feature_mode, "f1")
-            self.assertEqual(agent.feature_size, 11)
+            self.assertEqual(agent.feature_size, 41)
 
 
     def test_feature_mode_f0_creates_seven_feature_model(self):

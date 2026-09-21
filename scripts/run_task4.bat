@@ -24,6 +24,9 @@ REM   run_task4.bat sarsa_lambda_agent f7 shaped 123 finetune
 REM   run_task4.bat sarsa_lambda_agent f7 shaped 123 run
 REM   run_task4.bat sarsa_lambda_agent f7 shaped 123 eval
 REM   run_task4.bat sarsa_lambda_agent f7 shaped 123 gui
+REM   run_task4.bat linear_q_agent f7 shaped 123
+REM   run_task4.bat linear_q_agent f7 shaped 123 rule_based_agent coin_collector_agent rule_based_agent
+REM   run_task4.bat linear_q_agent f7 shaped 123 rule_based_agent rule_based_agent rule_based_agent gui
 REM
 REM Fixed settings:
 REM   scenario=classic
