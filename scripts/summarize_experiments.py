@@ -62,7 +62,7 @@ TASK3_RUN_PATTERN = re.compile(
 # Keep the feature part flexible so later variants such as F8 or F9 are
 # discovered automatically.
 TASK4_RUN_PATTERN = re.compile(
-    r"^(f\d+)_(sparse|basic|shaped|hunt_extra)_seed(\d+)_(baseline|finetuned|mixed|control|tactical|t44|stress_mixed|stress_rule3|trained)$"
+    r"^(f\d+)_(sparse|basic|shaped|hunt_extra)_seed(\d+)_(baseline|finetuned|mixed|control|tactical|t44|stress_mixed|stress_rule3|control_stress_mixed|control_stress_rule3|t46_1rule|t46_mixed|t46_rule3|trained)$"
 )
 
 TASK1_METRICS = [
@@ -814,7 +814,7 @@ def _task4_train_metrics_for_run(run_dir, agent_name):
 
 
 def analyze_task4_run(run_dir, agent_name, opponent_name="rule_based_agent"):
-    """Analyze one Task 4 experiment, including T4.5 multi-opponent stress tests."""
+    """Analyze one Task 4 experiment, including T4.5 stress tests and T4.6 fine-tuning evaluations."""
     match = TASK4_RUN_PATTERN.match(run_dir.name)
     if match is None:
         return None
