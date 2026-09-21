@@ -2,7 +2,7 @@
 setlocal
 
 REM ============================================================
-REM Task 3 three-agent opponent-hunting experiment runner
+REM Task 3 experiment runner
 REM
 REM Usage:
 REM   run_task3_three_agents.bat <agent> <feature_mode> <reward_mode> <experiment_seed> <opponent_1> <opponent_2>
@@ -79,7 +79,7 @@ REM Validate feature / reward / opponent modes
 REM ------------------------------------------------------------
 
 if /I not "%FEATURE_MODE%"=="f7" (
-    echo ERROR: FEATURE_MODE must be f7 for Task 3.
+    echo ERROR: FEATURE_MODE must be f5, f6, or f7 for Task 3 experiments.
     exit /b 1
 )
 
@@ -98,7 +98,46 @@ if /I not "%OPPONENT_2%"=="peaceful_agent" if /I not "%OPPONENT_2%"=="coin_colle
     exit /b 1
 )
 
-if /I "%GUI_EVAL%"=="gui" goto GUI_EVALUATION
+REM ------------------------------------------------------------
+REM Build opponent arguments
+REM ------------------------------------------------------------
+
+set "OPPONENT_ARGS="
+
+if /I "%OPPONENT%"=="both" (
+    set "OPPONENT_ARGS=peaceful_agent coin_collector_agent"
+)
+
+if /I "%OPPONENT%"=="peaceful_agent" (
+    set "OPPONENT_ARGS=peaceful_agent"
+)
+
+if /I "%OPPONENT%"=="coin_collector_agent" (
+    set "OPPONENT_ARGS=coin_collector_agent"
+)
+
+
+REM ------------------------------------------------------------
+REM Result directory
+REM ------------------------------------------------------------
+
+set "RESULT_DIR=results\task3\%AGENT%\%FEATURE_MODE%_%REWARD_MODE%_seed%EXPERIMENT_SEED%"
+
+REM Keep the original master directory layout when using both
+REM opponents. For single-opponent experiments, use a dedicated
+REM subdirectory so checkpoints and statistics do not overwrite
+REM each other.
+if /I not "%OPPONENT%"=="both" (
+    set "RESULT_DIR=results\task3\%AGENT%\%FEATURE_MODE%_%REWARD_MODE%_seed%EXPERIMENT_SEED%\%OPPONENT%"
+)
+
+
+REM ------------------------------------------------------------
+REM Jump directly to evaluation / GUI if requested
+REM ------------------------------------------------------------
+
+if /I "%RUN_MODE%"=="eval" goto EVALUATION_ONLY
+if /I "%RUN_MODE%"=="gui" goto GUI_EVALUATION
 
 REM ------------------------------------------------------------
 REM Result directory
@@ -235,13 +274,19 @@ echo.
 endlocal
 exit /b 0
 
+
+
+REM ============================================================
+REM GUI EVALUATION ONLY
+REM ============================================================
+
 :GUI_EVALUATION
 set "RESULT_DIR=results\task3\%AGENT%\%FEATURE_MODE%_%REWARD_MODE%_seed%EXPERIMENT_SEED%\%OPPONENT_1%_%OPPONENT_2%"
 
 if not exist "%RESULT_DIR%\model.pt" (
     echo ERROR: Trained checkpoint was not found:
     echo   %RESULT_DIR%\model.pt
-    echo Run the experiment without the gui option first.
+    echo Run the full experiment first.
     exit /b 1
 )
 
@@ -284,4 +329,6 @@ if errorlevel 1 (
     exit /b 1
 )
 
+
 endlocal
+exit /b 0
