@@ -808,6 +808,140 @@ class LinearSARSAAgentTest(unittest.TestCase):
         self.assertEqual(agent.model.output_size, 6)
 
 
+    def test_f8_feature_vector_has_forty_two_features(self):
+        """Feature Test BJ: Verify that F8 produces a 42-dimensional feature vector."""
+        state = self._game_state()
+        features = state_to_features(state, "f8")
+        self.assertEqual(features.shape, (42,))
+
+
+    def test_f8_preserves_all_f7_features(self):
+        """Feature Test BK: F8 must preserve the complete F7 representation."""
+        state = self._game_state()
+
+        f7 = state_to_features(state, "f7")
+        f8 = state_to_features(state, "f8")
+
+        np.testing.assert_array_equal(f8[:38], f7)
+
+
+    def test_f8_uses_task4_action_space_with_bomb(self):
+        """Feature Test BL: F8 uses the six Task 4 actions."""
+        actions = callbacks.actions_for_feature_mode("f8")
+        expected = ["UP", "DOWN", "LEFT", "RIGHT", "WAIT", "BOMB"]
+        self.assertEqual(actions, expected)
+
+
+    def test_f8_fresh_model_uses_forty_two_inputs_and_six_outputs(self):
+        """Feature Test BM: Fresh F8 training creates a 42-input, 6-action model."""
+        agent = SimpleNamespace(train=True, logger=Mock())
+
+        with patch.dict(os.environ, {"MODEL_START_MODE": "fresh", "FEATURE_MODE": "f8"}, clear=True):
+            callbacks.setup(agent)
+
+        self.assertEqual(agent.model.input_size, 42)
+        self.assertEqual(agent.model.output_size, 6)
+
+
+    def test_f8_normalized_opponent_distance_is_positive_for_reachable_opponent(self):
+        """Feature Test BN: F8 encodes a positive normalized distance to a reachable opponent."""
+        state = self._game_state()
+
+        state["self"] = ("player", 0, True, (3, 3))
+        state["others"] = [("enemy", 0, True, (5, 3))]
+
+        features = state_to_features(state, "f8")
+
+        self.assertGreater(features[38], 0.0)
+        self.assertLessEqual(features[38], 1.0)
+
+
+    def test_f8_tactical_features_are_zero_without_opponents(self):
+        """Feature Test BO: F8 tactical opponent features remain zero when no opponent is present."""
+        state = self._game_state()
+
+        state["others"] = []
+
+        features = state_to_features(state, "f8")
+
+        np.testing.assert_array_equal(features[38:42], np.zeros(4))
+
+
+    def test_f8_encodes_opponent_escape_fraction(self):
+        """Feature Test BP: F8 encodes the fraction of immediately available opponent escape directions."""
+        state = self._game_state()
+
+        state["self"] = ("player", 0, True, (3, 3))
+        state["others"] = [("enemy", 0, True, (5, 3))]
+
+        # Enemy at (5, 3). Block UP, DOWN and RIGHT, leaving only LEFT available.
+        state["field"][5, 2] = -1
+        state["field"][5, 4] = -1
+        state["field"][6, 3] = -1
+
+        features = state_to_features(state, "f8")
+
+        self.assertEqual(features[39], 0.25)
+
+
+    def test_f8_marks_opponent_with_one_escape_direction_as_low_escape(self):
+        """Feature Test BQ: F8 marks an opponent with at most one escape direction as low-escape."""
+        state = self._game_state()
+
+        state["self"] = ("player", 0, True, (3, 3))
+        state["others"] = [("enemy", 0, True, (5, 3))]
+
+        # Only LEFT remains available
+        state["field"][5, 2] = -1
+        state["field"][5, 4] = -1
+        state["field"][6, 3] = -1
+
+        features = state_to_features(state, "f8")
+
+        self.assertEqual(features[40], 1.0)
+
+
+    def test_f8_marks_safe_trapping_bomb_when_opponent_cannot_escape(self):
+        """Feature Test BR: F8 marks a safe bomb as trapping when the threatened opponent has no escape route."""
+        state = self._game_state()
+
+        field = np.full((9, 9), -1, dtype=int)
+
+        # Agent position and escape route.
+        field[3, 3] = 0
+        field[3, 2] = 0
+        field[3, 1] = 0
+        field[4, 1] = 0
+
+        # Opponent stands in the future horizontal blast line.
+        field[4, 3] = 0
+        field[5, 3] = 0
+
+        state["field"] = field
+        state["self"] = ("player", 0, True, (3, 3))
+        state["others"] = [("enemy", 0, True, (5, 3))]
+        state["coins"] = []
+        state["bombs"] = []
+        state["explosion_map"] = np.zeros((9, 9))
+
+        features = state_to_features(state, "f8")
+
+        self.assertEqual(features[41], 1.0)
+
+
+    def test_f8_does_not_mark_trapping_bomb_when_opponent_can_escape(self):
+        """Feature Test BS: F8 does not mark a bomb as trapping when the threatened opponent can escape."""
+        state = self._game_state()
+
+        state["self"] = ("player", 0, True, (3, 3))
+        state["others"] = [("enemy", 0, True, (5, 3))]
+        state["coins"] = []
+
+        features = state_to_features(state, "f8")
+
+        self.assertEqual(features[41], 0.0)
+
+
     def test_predict_returns_one_value_per_action(self):
         model = Linear_SARSAModel(input_size=7, output_size=len(callbacks.actions_for_feature_mode("f0")), seed=1)
         features = np.ones(7)
@@ -1717,7 +1851,83 @@ class LinearSARSAAgentTest(unittest.TestCase):
 
         self.assertIn(train.SAFE_USEFUL_BOMB_DROPPED, events)
         self.assertIn(train.SAFE_OPPONENT_BOMB_DROPPED_HUNT, events)
-    
+
+
+    def test_f7_adds_hunt_away_event_when_moving_off_opponent_path(self):
+        """Reward Test AE: F7 penalizes movement away from the opponent path in hunt mode."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f7"
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = []
+        new_state["coins"] = []
+
+        # Opponent is to the RIGHT, so RIGHT is the recommended path.
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, True, (2, 3))
+
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "LEFT", new_state, events)
+
+        self.assertIn(train.MOVED_AWAY_FROM_OPPONENT_HUNT, events)
+        self.assertNotIn(train.MOVED_TOWARDS_OPPONENT_HUNT, events)
+
+
+    def test_shape_reward_penalizes_f7_hunt_movement_away(self):
+        """Reward Test AF: Hunt-mode movement away from the opponent receives a symmetric penalty."""
+        agent = SimpleNamespace(
+            logger=Mock(),
+            reward_mode="hunt_extra"
+        )
+
+        reward = train.reward_from_events(agent, [train.MOVED_AWAY_FROM_OPPONENT_HUNT])
+
+        self.assertAlmostEqual(reward, -3.0)
+
+
+    def test_f7_does_not_add_hunt_away_event_outside_hunt_mode(self):
+        """Reward Test AG: F7 does not use the hunt-away penalty while a visible coin exists."""
+        agent = SimpleNamespace(
+            model=Mock(),
+            logger=Mock(),
+            transitions=[],
+            feature_mode="f7"
+        )
+
+        old_state = self._game_state()
+        new_state = self._game_state()
+
+        old_state["coins"] = [(1, 1)]
+        new_state["coins"] = [(1, 1)]
+
+        old_state["self"] = ("player", 0, True, (3, 3))
+        new_state["self"] = ("player", 0, True, (2, 3))
+
+        old_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["others"] = [("enemy", 0, True, (5, 3))]
+        new_state["step"] = 2
+
+        events = []
+
+        with patch.object(train, "reward_from_events", return_value=0.0), \
+            patch.object(train, "select_action", return_value="WAIT"):
+            train.game_events_occurred(agent, old_state, "LEFT", new_state, events)
+
+        self.assertNotIn(train.MOVED_AWAY_FROM_OPPONENT_HUNT, events)
+
 
     def test_shortest_path_direction_right(self):
         """Path Test A: Test that a target directly to the right returns RIGHT as the valid first step."""
