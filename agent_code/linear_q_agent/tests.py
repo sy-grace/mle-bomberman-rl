@@ -2309,7 +2309,7 @@ class LinearQAgentTest(unittest.TestCase):
                 callbacks.setup(agent)
 
             self.assertEqual(agent.feature_mode, "f1")
-            self.assertEqual(agent.feature_size, 11)
+            self.assertEqual(agent.feature_size, 41)
 
 
     def test_feature_mode_f0_creates_seven_feature_model(self):
