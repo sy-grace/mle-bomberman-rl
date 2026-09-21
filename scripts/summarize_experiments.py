@@ -62,7 +62,7 @@ TASK3_RUN_PATTERN = re.compile(
 # Keep the feature part flexible so later variants such as F8 or F9 are
 # discovered automatically.
 TASK4_RUN_PATTERN = re.compile(
-    r"^(f\d+)_(sparse|basic|shaped|hunt_extra)_seed(\d+)_(baseline|finetuned|mixed|control|tactical|t44|stress_mixed|stress_rule3|control_stress_mixed|control_stress_rule3|t46_1rule|t46_mixed|t46_rule3|trained)$"
+    r"^(f\d+)_(sparse|basic|shaped|hunt_extra)_seed(\d+)_(baseline|finetuned|mixed|control|tactical|t44|stress_mixed|stress_rule3|control_stress_mixed|control_stress_rule3|t46_1rule|t46_mixed|t46_rule3|t47_control123_1rule|t47_control123_mixed|t47_control123_rule3|t47_finetuned456_1rule|t47_finetuned456_mixed|t47_finetuned456_rule3|trained)$"
 )
 
 TASK1_METRICS = [
