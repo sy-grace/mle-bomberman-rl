@@ -54,7 +54,7 @@ def setup(self):
     if self.model_start_mode not in {"resume", "fresh"}:
         raise ValueError("MODEL_START_MODE must be either 'resume' or 'fresh'.")
 
-    self.feature_mode = os.getenv("FEATURE_MODE", "f1")
+    self.feature_mode = os.getenv("FEATURE_MODE", "f7")
 
     if self.feature_mode not in FEATURE_SIZES:
         raise ValueError("FEATURE_MODE must be one of 'f0', 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', or 'f8'.")

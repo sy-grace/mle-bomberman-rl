@@ -389,5 +389,3 @@ def is_hunt_mode( game_state):
         return False
 
     return len(game_state.get("coins", [])) == 0 and len(game_state.get("others", [])) > 0
-
-
